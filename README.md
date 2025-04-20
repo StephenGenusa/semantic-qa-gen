@@ -388,12 +388,9 @@ response = retriever.retrieve("How does photosynthesis work?")
 ## Project File Organization
 ```txt
 .
-├── 📄 __init__.py
-├── 📄 semantic_qa_gen.py
-├── 📄 version.py
 ├── 📁 semantic_qa_gen
 │   ├── 📄 __init__.py
-│   ├── 📄 main.py
+│   ├── 📄 version.py
 │   ├── 📄 semantic_qa_gen.py
 │   ├── 📁 chunking
 │   │   ├── 📄 analyzer.py
