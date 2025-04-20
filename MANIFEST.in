@@ -1,0 +1,12 @@
+include LICENSE
+include README.md
+include pyproject.toml
+include tox.ini
+
+recursive-include semantic_qa_gen/llm/prompts/templates *.yaml *.yml
+recursive-include docs *.md *.png
+recursive-include tests *.py *.txt *.pdf *.md
+
+prune tests/data
+prune .github
+prune docs/_build

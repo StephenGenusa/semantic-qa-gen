@@ -1,0 +1,64 @@
+"""
+Analysis prompt templates for chunk analysis and classification.
+"""
+
+chunk_analysis:
+  template: |
+    Please analyze the following text passage to determine its quality for generating educational questions.
+    
+    Text passage:
+    ---
+    {chunk_content}
+    ---
+    
+    Provide a detailed analysis including:
+    1. Information density (0.0-1.0): How rich in facts and information the text is
+    2. Topic coherence (0.0-1.0): How focused and well-structured the content is
+    3. Complexity (0.0-1.0): How technically complex or conceptually difficult the content is
+    4. Question potential: Estimate how many questions of each type could be generated:
+       - Factual questions (direct information from text)
+       - Inferential questions (connections between pieces of information)
+       - Conceptual questions (broader principles, ideas, implications)
+    5. Key concepts: List 3-7 important concepts, terms, or ideas from the text
+    
+    Return your analysis in the following JSON format:
+    {
+        "information_density": 0.0-1.0,
+        "topic_coherence": 0.0-1.0,
+        "complexity": 0.0-1.0,
+        "estimated_question_yield": {
+            "factual": number,
+            "inferential": number,
+            "conceptual": number
+        },
+        "key_concepts": ["concept1", "concept2", ...],
+        "notes": "Any additional observations"
+    }
+  description: "Analyzes a text chunk for information density and educational value"
+  json_output: true
+  system_prompt: "You are an expert educational content analyst who evaluates text for its potential to generate high-quality educational questions."
+  model_preference: "gpt-4"
+  
+chunk_classification:
+  template: |
+    Classify the following text passage by subject area and educational level.
+    
+    Text passage:
+    ---
+    {chunk_content}
+    ---
+    
+    Identify the primary subject area(s) and appropriate educational level for this content.
+    
+    Return your analysis in the following JSON format:
+    {
+        "primary_subject": "subject_name",
+        "secondary_subjects": ["subject1", "subject2"],
+        "educational_level": "elementary|middle_school|high_school|undergraduate|graduate|professional",
+        "complexity": 0.0-1.0,
+        "specialized_knowledge_required": true|false,
+        "reasoning": "Brief explanation of your classification"
+    }
+  description: "Classifies a text chunk by subject area and educational level"
+  json_output: true
+  system_prompt: "You are an expert curriculum specialist who classifies educational content by subject and level."
