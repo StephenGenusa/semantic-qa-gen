@@ -776,9 +776,9 @@ output:
 ```
 
 ### Example JSON Output
-```json
 In the JSON output format, the metadata for each question/answer pair is integrated directly with the question/answer data. Each question is represented as a single JSON object that contains all its associated information, including the question text, answer text, category, and all metadata
 
+```json
 {
   "questions": [
     {
@@ -802,8 +802,8 @@ In the JSON output format, the metadata for each question/answer pair is integra
         "keywords": ["photosynthesis", "plants", "chlorophyll", "glucose", "energy conversion"]
       }
     },
-    // Additional questions...
 ```
+    // Additional questions...
 
 
 ### Environment Variables
