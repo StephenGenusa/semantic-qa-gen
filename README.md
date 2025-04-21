@@ -1595,5 +1595,3 @@ semantic-qa-gen process document.pdf -o output --verbose
 SemanticQAGen is released under the MIT License.
 
 Copyright © 2025 Stephen Genusa
-
-This project builds upon concepts from the original Augmentoolkit project. SemanticQAGen is not affiliated with or endorsed by the creators of Augmentoolkit.
