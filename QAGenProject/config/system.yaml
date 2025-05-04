@@ -1,0 +1,122 @@
+# SemanticQAGen configuration
+version: "1.0"
+
+# Document processing settings
+document:
+  loaders:
+    normalize_whitespace: true
+    fix_encoding_issues: true
+    fix_formatting_issues: true
+    text:
+      enabled: true
+      encoding: utf-8
+    pdf:
+      enabled: true
+      extract_images: false
+      ocr_enabled: false
+      detect_headers_footers: true
+    markdown:
+      enabled: true
+      extract_metadata: true
+    docx:
+      enabled: true
+      extract_tables: true
+
+
+# Chunking settings
+chunking:
+  strategy: semantic
+  target_chunk_size: 1500
+  overlap_size: 150
+  preserve_headings: true
+  min_chunk_size: 500
+  max_chunk_size: 2500
+
+
+
+# LLM services configuration
+llm_services:
+  local:
+    enabled: true
+    url: "http://localhost:11434"
+    model: "mistral:7b"
+    preferred_tasks: [validation, analysis, generation]
+    timeout: 60
+  remote:
+    enabled: false
+    provider: openai
+    model: gpt-4
+    api_key: ${OPENAI_API_KEY}
+    preferred_tasks: []
+    timeout: 120
+    rate_limit_tokens: 90000
+    rate_limit_requests: 100
+
+# Question generation settings
+question_generation:
+  max_questions_per_chunk: 10
+  adaptive_generation: true
+  categories:
+    factual:
+      min_questions: 2
+      weight: 1.0
+    inferential:
+      min_questions: 2
+      weight: 1.2
+    conceptual:
+      min_questions: 1
+      weight: 1.5
+  diversity:
+    required: true
+    min_similarity_threshold: 0.75
+
+
+# Validation settings
+validation:
+  factual_accuracy:
+    enabled: true
+    threshold: 0.8
+  answer_completeness:
+    enabled: true
+    threshold: 0.8
+  question_clarity:
+    enabled: true
+    threshold: 0.8
+  diversity:
+    enabled: true
+    similarity_metric: cosine
+  rag_factual:
+    enabled: true
+    model: "gpt-4"
+    threshold: 0.7
+  use_enhanced_validation: true
+
+
+
+# Batch processing settings
+processing:
+  concurrency: 3
+  enable_checkpoints: true
+  checkpoint_interval: 10
+  checkpoint_dir: "./checkpoints"
+  log_level: "INFO"
+  batch:
+    enabled: true
+    input_dir: "./documents"
+    output_dir: "./output"
+    supported_types: ["txt", "pdf", "md", "docx"]
+    parallel_processing: true
+    max_concurrent_files: 2
+    continue_on_error: true
+    track_processed_files: true
+    skip_completed_files: true
+    resume_strategy: "auto-detect"
+
+# Output settings
+output:
+  format: json
+  include_metadata: true
+  include_statistics: true
+  output_dir: "./output"
+  json_indent: 2
+  csv_delimiter: ","

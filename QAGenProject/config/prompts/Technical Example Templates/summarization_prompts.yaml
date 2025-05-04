@@ -1,0 +1,64 @@
+# Technical summarization prompts for documentation and knowledge sharing.
+
+technical_document_summary:
+  template: |
+    Create a comprehensive technical summary of the following document:
+    
+    Document Title: {title}
+    Document Type: {doc_type}
+    
+    Content:
+    ---
+    {content}
+    ---
+    
+    Provide a technical summary that:
+    1. Identifies the core technical concepts, architectures, and implementation details
+    2. Highlights key design decisions, trade-offs, and performance considerations 
+    3. Summarizes any algorithms, protocols, or methodologies presented
+    4. Organizes the information logically with appropriate technical precision
+    5. Is approximately 250-350 words in length
+    
+    Example of expected summary format and style:
+
+    "This technical specification details the implementation of a distributed log aggregation system designed for high-throughput microservice environments. The architecture employs a three-tier approach: collector agents, regional aggregators, and central storage nodes, with an intermediate Kafka cluster handling buffering and partition tolerance.
+
+    The collector agents implement a novel adaptive sampling algorithm that dynamically adjusts sampling rates based on observed error frequencies, reducing overhead by 63% during normal operation while maintaining 99.7% error detection sensitivity. Agents communicate with aggregators using Protocol Buffers over gRPC, with configurable compression (LZ4 or zstd) applied based on bandwidth constraints.
+
+    Regional aggregators implement a consistent hashing ring for distribution, with a rebalancing protocol that limits node reassignments to 5% during scaling events. This addresses the cascading hotspot issues identified in previous implementations. The specification provides detailed throughput benchmarks showing 18GB/minute processing per aggregator node on recommended hardware (8 vCPUs, 16GB RAM).
+
+    The central storage tier implements a customized columnar format optimized for time-series log data, achieving 3:1 compression ratios over standard Parquet files for typical production logs. For data retention, the system implements a multi-temperature storage policy with automatic downsampling of metrics after 30 days and configurable retention policies for full log data.
+
+    The most significant trade-off detailed is the eventual consistency model between regional aggregators and central storage, with a documented worst-case lag of 120 seconds during regional network partitions. The document includes recovery procedures and consistency verification tools to manage this limitation."
+    
+    Return only the technical summary without additional commentary, introductions, or meta-descriptions.
+  description: "Creates a comprehensive technical document summary"
+  json_output: false
+  system_prompt: "You are a senior technical writer with extensive background in software engineering and systems architecture. You excel at distilling complex technical documents into precise, information-dense summaries that maintain technical accuracy while highlighting key implementation details and design decisions."
+  temperature: 0.4
+
+technical_component_summary:
+  template: |
+    Create a concise technical summary of the following component description:
+    
+    Content:
+    ---
+    {chunk_content}
+    ---
+    
+    Provide a summary that:
+    1. Identifies the component's purpose, interfaces, and technical characteristics
+    2. Highlights key implementation details, dependencies, and constraints
+    3. Summarizes performance characteristics and operational considerations
+    4. Is approximately 75-100 words in length
+    5. Maintains technical precision and uses appropriate domain terminology
+    
+    Example of expected summary format and style:
+
+    "The AuthenticationProvider component implements OAuth 2.0 and OIDC protocols with JWT validation. It exposes REST endpoints for token issuance and validation with configurable rate limiting (default: 100 req/sec). Internal implementation uses PASETO for service-to-service communication. Performance benchmarks show 2ms median latency for token validation operations. Component requires connection to Redis for token blacklisting with circuit breaking for Redis failures. Primary dependencies: jose-jwt 4.x, Redis client 2.x, and custom rate limiting middleware. Configuration supports multiple identity providers through YAML-defined connector templates."
+    
+    Return only the requested technical summary without additional commentary, introductions, or meta-descriptions.
+  description: "Creates a concise summary of a technical component"
+  json_output: false
+  system_prompt: "You are a technical architect with expertise in creating precise component specifications and documentation. You excel at identifying key technical details and constraints while maintaining brevity and technical accuracy."
+  temperature: 0.3

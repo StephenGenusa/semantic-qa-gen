@@ -1,0 +1,86 @@
+# Analysis prompt templates for military training manual content.
+
+tactical_content_analysis:
+  template: |
+    Analyze the following military training manual content to determine its training value and critical knowledge components.
+    
+    Training manual content:
+    ---
+    {chunk_content}
+    ---
+    
+    Provide a detailed analysis including:
+    1. Doctrinal accuracy (0.0-1.0): How accurately it reflects current military doctrine
+    2. Procedural clarity (0.0-1.0): How clearly procedures and protocols are explained
+    3. Mission relevance (0.0-1.0): How directly applicable to mission execution
+    4. Training potential: Estimate how many questions of each type could be generated:
+       - Knowledge-based questions (terminology, equipment, standards)
+       - Procedural questions (steps, sequences, methods)
+       - Decision-making questions (tactical choices, leadership decisions)
+       - Safety-critical information (warnings, cautions, emergency procedures)
+    5. Key training points: List 3-7 mission-critical concepts or procedures from the text
+    
+    Return your analysis in the following JSON format, with a specific example shown below:
+
+    ```json
+    {
+        "doctrinal_accuracy": 0.95,
+        "procedural_clarity": 0.87,
+        "mission_relevance": 0.92,
+        "training_question_potential": {
+            "knowledge_based": 12,
+            "procedural": 8,
+            "decision_making": 6,
+            "safety_critical": 4
+        },
+        "key_training_points": ["9-line MEDEVAC request format", "casualty collection point establishment criteria", "tactical field care priorities", "MIST report elements", "evacuation precedence categories"],
+        "notes": "Content contains essential TCCC procedures with current protocols. Includes all critical decision points for combat casualty assessment and evacuation. References current ATP 4-02.2 standards."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches this exact format. Adjust values based on the actual content provided.
+  description: "Analyzes military training manual content for training value and critical knowledge"
+  json_output: true
+  system_prompt: "You are a senior military training development specialist with extensive experience in tactical doctrine, military procedures, and instructional systems design. You evaluate training content for doctrinal accuracy, procedural clarity, and mission relevance to ensure effective knowledge transfer to military personnel."
+  model_preference: "gpt-4"
+  temperature: 0.2
+
+training_classification:
+  template: |
+    Classify the following military training manual content by domain, operational level, and target personnel.
+    
+    Training manual content:
+    ---
+    {chunk_content}
+    ---
+    
+    Identify the primary military domain, operational context, and appropriate audience level.
+    
+    For military domains, use standard classifications (e.g., Small Unit Tactics, Military Intelligence, Combat Medicine, Communications, Logistics).
+    
+    For operational level, choose the most appropriate from:
+    - individual (individual soldier skills)
+    - team/squad (small unit operations)
+    - platoon/company (tactical operations)
+    - battalion/brigade (operational)
+    - division/corps (strategic)
+    
+    Return your analysis in the following JSON format, with an example shown below:
+
+    ```json
+    {
+        "primary_domain": "Combat Engineering",
+        "sub_domains": ["Explosive Ordnance Disposal", "Mobility Operations", "Force Protection"],
+        "operational_level": "team/squad",
+        "target_personnel": ["Combat Engineer Specialists", "EOD Technicians", "Combat Engineer Team Leaders"],
+        "prerequisites": ["Basic Combat Engineer Qualification", "IED Identification Training", "Route Clearance Procedures"],
+        "security_classification": "UNCLASSIFIED",
+        "reasoning": "The content focuses on tactical-level route clearance operations with specific procedures for IED detection and disposal. It details team leader responsibilities and covers squad-level coordination during engineer support missions. The content references FM 3-34.2 and includes current TTPs for route clearance teams."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches this exact format. Adjust values based on the actual content provided.
+  description: "Classifies military training content by domain, operational level, and target personnel"
+  json_output: true
+  system_prompt: "You are a military doctrine specialist with experience across multiple service branches. You excel at categorizing military training materials according to applicable warfare domains, operational levels, and appropriate target personnel to ensure proper training implementation."
+  temperature: 0.2

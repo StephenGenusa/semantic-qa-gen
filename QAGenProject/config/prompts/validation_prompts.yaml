@@ -1,0 +1,163 @@
+# Technical validation prompt templates for ensuring documentation quality.
+
+technical_accuracy:
+  template: |
+    Evaluate the technical accuracy of this documentation section against the source content.
+    
+    Source content:
+    ---
+    {chunk_content}
+    ---
+    
+    Documentation section: {question}
+    
+    Implementation details: {answer}
+    
+    Carefully analyze the implementation details for technical accuracy, completeness, and correctness compared to the source content. Check for errors in syntax, parameter names, configuration values, architectural descriptions, or technical concepts.
+    
+    Provide your evaluation as a JSON object exactly like this example:
+
+    ```json
+    {
+      "technically_accurate": false,
+      "confidence": 0.94,
+      "technical_issues": [
+        "The connection timeout is incorrectly stated as 30 seconds, but the source specifies 10 seconds",
+        "The retry logic uses arithmetic backoff but the source explicitly requires exponential backoff",
+        "The Kubernetes resource configuration omits the required securityContext parameters"
+      ],
+      "suggestions": "Correct the connection timeout to 10 seconds. Implement exponential (not arithmetic) backoff with parameters matching the source. Add the required securityContext configuration with 'runAsNonRoot: true' and appropriate capabilities.",
+      "reasoning": "The documentation contains critical technical errors that would cause implementation issues if followed. The incorrect timeout value would cause delayed failure detection. The backoff strategy mismatch would lead to ineffective retry patterns under load. The missing security context would violate the cluster security policy requirements specified in the source."
+    }
+    ```
+
+    OR:
+
+    ```json
+    {
+      "technically_accurate": true,
+      "confidence": 0.97,
+      "technical_issues": [],
+      "suggestions": "For enhanced clarity, consider adding the example curl command for API testing that's provided in the source content. Also, the version number for the Redis dependency could be explicitly mentioned.",
+      "reasoning": "The implementation details accurately reflect all critical technical aspects of the source content. The code examples match exactly, including parameter names, values, and syntax. The architectural description correctly explains the component interactions, dependencies and configuration requirements."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches one of these formats, adjusting content based on your actual evaluation.
+  description: "Validates technical accuracy of documentation against source"
+  json_output: true
+  system_prompt: "You are a senior technical reviewer with extensive software engineering experience. You have a meticulous eye for technical details and can quickly identify inconsistencies, errors, or omissions in technical documentation that would cause implementation problems."
+  temperature: 0.2
+
+implementation_completeness:
+  template: |
+    Evaluate the completeness of these implementation details for a technical professional trying to implement the described solution.
+    
+    Source content:
+    ---
+    {chunk_content}
+    ---
+    
+    Implementation topic: {question}
+    
+    Implementation details: {answer}
+    
+    Assess whether the implementation details provide all necessary information for a successful implementation, including:
+    - All required configuration parameters, their types, and acceptable values
+    - Necessary dependencies and their versions
+    - Complete code examples or commands where relevant
+    - Error handling and edge cases
+    - Initialization and cleanup procedures
+    - Any prerequisites or systems preparation steps
+    
+    Provide your evaluation as a JSON object exactly like this example:
+
+    ```json
+    {
+      "implementation_complete": false,
+      "completeness_score": 0.65,
+      "missing_elements": [
+        "No error handling for network timeout scenarios",
+        "Missing initialization procedure for the connection pool",
+        "Database schema creation scripts referenced but not provided",
+        "No explanation of required environment variables",
+        "Missing cleanup procedures for graceful shutdown"
+      ],
+      "suggestions": "Add error handling code examples for network timeouts. Include initialization code for the connection pool with recommended settings. Provide the full database schema creation scripts. Document required environment variables with example values. Add cleanup procedures for graceful service shutdown.",
+      "reasoning": "While the core implementation logic is well documented, the details lack critical operational elements needed for production deployment. A developer would be unable to properly initialize, error-handle, or cleanly shut down the described system, creating potential resource leaks and failure scenarios."
+    }
+    ```
+
+    OR:
+
+    ```json
+    {
+      "implementation_complete": true,
+      "completeness_score": 0.96,
+      "missing_elements": [],
+      "suggestions": "Consider adding a troubleshooting section addressing common failure modes observed in similar implementations. A performance tuning guide would also enhance this already comprehensive implementation.",
+      "reasoning": "The implementation details are exceptionally complete, covering all necessary configuration, initialization, error handling, and operational aspects. The code examples are comprehensive and include comments explaining key decisions. All dependencies are explicitly versioned and prerequisite steps are clearly outlined."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches one of these formats, adjusting content based on your actual evaluation.
+  description: "Evaluates completeness of technical implementation details"
+  json_output: true
+  system_prompt: "You are a senior DevOps engineer and implementation specialist. You excel at identifying missing elements in technical documentation that would prevent successful implementation. Your experience building and deploying complex systems gives you insight into what technical professionals need for effective implementation."
+  temperature: 0.2
+
+architectural_soundness:
+  template: |
+    Evaluate the architectural soundness and design quality of the described technical approach.
+    
+    Source content:
+    ---
+    {chunk_content}
+    ---
+    
+    Architecture topic: {question}
+    
+    Architecture description: {answer}
+    
+    Assess the architectural description for:
+    - Design soundness and adherence to established patterns and principles
+    - Scalability, reliability, and maintainability considerations
+    - Appropriate handling of technical trade-offs
+    - Consistency with the source content's architectural vision
+    - Consideration of security, performance, and operational aspects
+    
+    Provide your evaluation as a JSON object exactly like this example:
+
+    ```json
+    {
+      "architecturally_sound": false,
+      "design_quality_score": 0.58,
+      "architectural_issues": [
+        "Proposed architecture creates tight coupling between services that should be independent",
+        "Direct database access across service boundaries violates encapsulation principles",
+        "No consideration of cascading failure scenarios",
+        "Stateful design contradicts the scalability requirements in the source content",
+        "Security relies on network segregation without defense-in-depth"
+      ],
+      "suggestions": "Implement API gateway pattern to decouple services. Replace direct database access with service APIs. Add circuit breakers to prevent cascading failures. Convert stateful components to stateless with external state stores as specified in the source. Implement proper authentication and authorization at both gateway and service levels.",
+      "reasoning": "The proposed architecture contradicts several fundamental principles described in the source content. The tight coupling would prevent independent scaling and deployment, while the stateful design directly conflicts with the horizontal scalability requirements. The security approach lacks the defense-in-depth strategy emphasized in the original content."
+    }
+    ```
+
+    OR:
+
+    ```json
+    {
+      "architecturally_sound": true,
+      "design_quality_score": 0.92,
+      "architectural_issues": [],
+      "suggestions": "Consider enhancing the design with the chaos engineering approach mentioned briefly in the source content to more rigorously verify the resilience patterns. Also, the CQRS pattern might further improve scalability of read operations.",
+      "reasoning": "The architecture demonstrates excellent alignment with the source content's principles and requirements. It properly implements the event-driven approach, maintains service boundaries, addresses scalability through stateless design, and incorporates appropriate resilience patterns. The security model implements defense-in-depth as specified, and the caching strategy balances performance with consistency requirements."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches one of these formats, adjusting content based on your actual evaluation.
+  description: "Evaluates architectural soundness and design quality"
+  json_output: true
+  system_prompt: "You are a principal solutions architect with extensive experience designing and reviewing complex technical systems. You have deep knowledge of architectural patterns, distributed systems principles, and technical trade-offs. You excel at evaluating architectural decisions against best practices and specific requirements."
+  temperature: 0.2

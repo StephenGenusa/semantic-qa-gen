@@ -64,6 +64,9 @@ class OutputError(SemanticQAGenError):
     """Exception raised for output formatting errors."""
     pass
 
+class AnalyzerError(SemanticQAGenError):
+    """Exception raised for SemanticAnalyzer errors."""
+    pass
 
 class RetryStrategy:
     """Strategy for retrying operations."""

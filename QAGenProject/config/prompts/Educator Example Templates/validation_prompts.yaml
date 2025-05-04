@@ -1,0 +1,152 @@
+# Validation prompt templates for ensuring question quality.
+
+factual_accuracy:
+  template: |
+    Evaluate the factual accuracy of this question and answer pair based on the source text.
+    
+    Source text:
+    ---
+    {chunk_content}
+    ---
+    
+    Question: {question}
+    
+    Answer: {answer}
+    
+    Carefully compare the question and answer against the source text to identify any factual errors, misrepresentations, unsupported claims, or inaccuracies.
+    
+    Provide your evaluation as a JSON object exactly like this example:
+
+    ```json
+    {
+      "is_accurate": false,
+      "confidence": 0.92,
+      "issues": [
+        "The answer states that mitochondria contain chlorophyll, but the source text clearly states that chlorophyll is found in chloroplasts, not mitochondria",
+        "The answer gives the ATP yield as 38 molecules, but the text specifies 32-34 ATP molecules"
+      ],
+      "suggestions": "Correct the location of chlorophyll to chloroplasts instead of mitochondria. Update the ATP yield to match the 32-34 figure stated in the source text.",
+      "reasoning": "The answer contains two clear factual errors that contradict specific information provided in the source text. While most of the answer correctly describes cellular respiration, these two inaccuracies significantly impact the educational value of the response."
+    }
+    ```
+
+    OR:
+
+    ```json
+    {
+      "is_accurate": true,
+      "confidence": 0.96,
+      "issues": [],
+      "suggestions": null,
+      "reasoning": "The answer accurately reflects the source text's explanation of the three branches of government. All claims in the answer are directly supported by information in the passage, including the specific powers allocated to each branch and the concept of checks and balances."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches one of these formats, adjusting content based on your actual evaluation.
+  description: "Validates factual accuracy of question-answer pairs"
+  json_output: true
+  system_prompt: "You are an expert fact-checker with exceptional attention to detail and commitment to accuracy. You have extensive experience verifying educational content across multiple disciplines. Your role is to ensure that question-answer pairs precisely match the information provided in source materials, detecting even subtle factual errors."
+  temperature: 0.2
+
+question_clarity:
+  template: |
+    Evaluate the clarity and quality of this question based on educational standards.
+    
+    Question: {question}
+    
+    Assess the question for:
+    - Clarity and precision of language
+    - Specificity of what's being asked
+    - Absence of ambiguity or vagueness
+    - Appropriateness of complexity level
+    - Educational value
+    
+    Provide your evaluation as a JSON object exactly like one of these examples:
+
+    ```json
+    {
+      "is_clear": false,
+      "ambiguity_score": 0.65,
+      "complexity_level": "moderate",
+      "issues": [
+        "Uses the vague term 'impact' without specifying what type of impact (economic, social, environmental, etc.)",
+        "Contains undefined technical term 'negative externalities' without context",
+        "Asks about 'most important factors' without clarifying important for what outcome"
+      ],
+      "suggestions": "Specify the type of impact being asked about (e.g., 'environmental impact'). Either define 'negative externalities' or rephrase without using this technical term. Clarify what outcome the 'important factors' should be evaluated against.",
+      "reasoning": "The question lacks precision in multiple areas, requiring the respondent to guess what specific aspects they should focus on. This ambiguity would make it difficult to consistently assess student responses against any specific criteria."
+    }
+    ```
+
+    OR:
+
+    ```json
+    {
+      "is_clear": true,
+      "ambiguity_score": 0.05,
+      "complexity_level": "complex",
+      "issues": [],
+      "suggestions": null,
+      "reasoning": "The question clearly asks for a comparison between two specific economic theories using well-defined criteria. It specifies exactly what aspects to analyze (assumptions, historical evidence, and policy implications) and has a clear scope. Though complex, the difficulty is appropriate for the subject matter rather than resulting from poor phrasing."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches one of these formats, adjusting content based on your actual evaluation.
+  description: "Evaluates clarity and quality of questions"
+  json_output: true
+  system_prompt: "You are an expert educator with specialized training in assessment design and educational measurement. You excel at identifying ambiguities, imprecisions, and structural flaws in questions that might interfere with accurate assessment of student knowledge."
+  temperature: 0.2
+
+answer_completeness:
+  template: |
+    Evaluate the completeness and quality of this answer in relation to its question and the source text.
+    
+    Question: {question}
+    
+    Answer: {answer}
+    
+    Source text:
+    ---
+    {chunk_content}
+    ---
+    
+    Assess the answer for:
+    - Completeness in addressing all aspects of the question
+    - Accuracy relative to the source text
+    - Appropriate level of detail and explanation
+    - Logical organization and clarity
+    - Proper use of examples or evidence from the text when relevant
+    
+    Provide your evaluation as a JSON object exactly like one of these examples:
+
+    ```json
+    {
+      "is_complete": false,
+      "completeness_score": 0.45,
+      "missing_elements": [
+        "Fails to address the second part of the question about environmental implications",
+        "Doesn't mention the carbon capture technology described in paragraph 3 of the source",
+        "Omits the statistical evidence (37% reduction) provided in the source"
+      ],
+      "suggestions": "Include information about environmental implications as explicitly requested in the question. Add details about carbon capture technology from paragraph 3. Incorporate the statistical evidence about 37% reduction to strengthen the answer's evidential basis.",
+      "reasoning": "The answer partially addresses the question by explaining the economic aspects well, but completely ignores the environmental implications that were specifically requested. Several relevant details from the source text that would provide crucial evidence are also missing."
+    }
+    ```
+
+    OR:
+
+    ```json
+    {
+      "is_complete": true,
+      "completeness_score": 0.92,
+      "missing_elements": [],
+      "suggestions": "Consider adding brief mention of the limitations discussed in the final paragraph of the source regarding generalizability across different populations.",
+      "reasoning": "The answer comprehensively addresses all aspects of the question with appropriate detail. It accurately represents the information from the source text, includes all major points and supporting evidence, and is organized logically. The minor suggestion is an enhancement rather than addressing a critical omission."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches one of these formats, adjusting content based on your actual evaluation.
+  description: "Evaluates completeness and quality of answers"
+  json_output: true
+  system_prompt: "You are an expert educator with extensive experience in evaluating student responses and developing comprehensive answer keys. You have a keen ability to identify gaps in answers relative to questions asked and source materials, ensuring that educational content meets the highest standards of completeness and accuracy."
+  temperature: 0.2

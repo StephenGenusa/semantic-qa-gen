@@ -318,13 +318,13 @@ config = {
             "enabled": True,
             "url": "http://localhost:11434/api",
             "model": "mistral:7b",
-            "default_for": ["chunking", "validation"]
+            "preferred_tasks": ["chunking", "validation"]
         },
         "remote": {
             "enabled": True,
             "provider": "openai",
             "model": "gpt-4",
-            "default_for": ["analysis", "generation"]
+            "preferred_tasks": ["analysis", "generation"]
         }
     }
 }
@@ -696,14 +696,14 @@ llm_services:
     enabled: true
     url: "http://localhost:11434/api"
     model: "mistral:7b"
-    default_for: [chunking, validation]
+    preferred_tasks: [chunking, validation]
     timeout: 60
   remote:
     enabled: true
     provider: openai
     model: gpt-4
     api_key: ${OPENAI_API_KEY}
-    default_for: [analysis, generation]
+    preferred_tasks: [analysis, generation]
     timeout: 120
     rate_limit_tokens: 90000
     rate_limit_requests: 100
@@ -1251,14 +1251,14 @@ config = {
             "enabled": True,
             "url": "http://localhost:11434/api",
             "model": "mistral:7b",
-            "default_for": ["chunking", "validation"]
+            "preferred_tasks": ["validation"]
         },
         "remote": {
             "enabled": True,
             "provider": "openai",
             "model": "gpt-4",
             "api_key": "YOUR_API_KEY",
-            "default_for": ["analysis", "generation"]
+            "preferred_tasks": ["analysis", "generation"]
         }
     }
 }

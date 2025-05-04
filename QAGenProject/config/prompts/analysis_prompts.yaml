@@ -1,0 +1,83 @@
+# Analysis prompt templates for technical content assessment.
+
+technical_content_analysis:
+  template: |
+    Analyze the following technical content to assess its value for knowledge transfer and documentation purposes.
+    
+    Technical content:
+    ---
+    {chunk_content}
+    ---
+    
+    Provide a detailed analysis including:
+    1. Technical depth (0.0-1.0): How comprehensive and detailed the technical information is
+    2. Architectural clarity (0.0-1.0): How clearly the systems, components, or processes are explained
+    3. Implementation specificity (0.0-1.0): How actionable and specific the technical details are
+    4. Documentation potential: Estimate how many documentation items of each type could be generated:
+       - Reference documentation (API specs, parameters, return values)
+       - Implementation guides (how-to procedures, setup instructions)
+       - Architecture explanations (system design, component interactions)
+    5. Key technical concepts: List 3-7 important technical terms, patterns, or components from the text
+    
+    Return your analysis in the following JSON format, with a specific example shown below:
+
+    ```json
+    {
+        "technical_depth": 0.87,
+        "architectural_clarity": 0.75,
+        "implementation_specificity": 0.92,
+        "documentation_potential": {
+            "reference": 12,
+            "implementation": 8,
+            "architecture": 5
+        },
+        "key_technical_concepts": ["microservices", "load balancing", "stateless design", "API gateway", "circuit breaker pattern"],
+        "notes": "The content provides detailed implementation patterns with code examples and performance considerations. Contains valuable system design decisions and trade-off explanations that would benefit engineering teams."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches this exact format. Adjust values based on the actual content provided.
+  description: "Analyzes technical content for documentation value and knowledge transfer potential"
+  json_output: true
+  system_prompt: "You are a senior technical architect with extensive experience in systems design, documentation, and knowledge management. You evaluate technical content for its completeness, clarity, and usefulness to other engineers and technical teams."
+  model_preference: "gpt-4"
+  temperature: 0.2
+
+technical_classification:
+  template: |
+    Classify the following technical content by domain, complexity, and intended audience.
+    
+    Technical content:
+    ---
+    {chunk_content}
+    ---
+    
+    Identify the primary technical domain, relevant sub-domains, and appropriate technical audience level.
+    
+    For technical domains, use standard industry classifications (e.g., Backend Development, Network Security, Machine Learning, DevOps, Embedded Systems).
+    
+    For technical audience level, choose the most appropriate from:
+    - beginner (fundamental concepts, getting started)
+    - intermediate (working professionals with basic experience)
+    - advanced (experienced professionals with domain expertise)
+    - expert (specialists with deep domain knowledge)
+    - architect (cross-domain systems thinking, design patterns)
+    
+    Return your analysis in the following JSON format, with an example shown below:
+
+    ```json
+    {
+        "primary_domain": "Distributed Systems",
+        "sub_domains": ["Microservices Architecture", "Cloud Infrastructure", "System Resilience"],
+        "audience_level": "advanced",
+        "prerequisite_knowledge": ["RESTful APIs", "Container Orchestration", "Networking Fundamentals"],
+        "implementation_readiness": 0.85,
+        "reasoning": "The content discusses advanced fault tolerance patterns in microservice architectures with explicit code examples in Go and includes performance benchmarks. It assumes familiarity with distributed tracing, service mesh implementations, and container orchestration concepts that would be beyond intermediate level."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches this exact format. Adjust values based on the actual content provided.
+  description: "Classifies technical content by domain, complexity, and audience"
+  json_output: true
+  system_prompt: "You are a technical director with experience across multiple engineering disciplines. You excel at categorizing technical content and determining appropriate audience levels based on complexity, prerequisite knowledge, and implementation details."
+  temperature: 0.2

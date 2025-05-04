@@ -1,0 +1,84 @@
+# Analysis prompt templates for chunk analysis and classification.
+
+chunk_analysis:
+  template: |
+    Please analyze the following text passage to determine its quality for generating educational questions.
+    
+    Text passage:
+    ---
+    {chunk_content}
+    ---
+    
+    Provide a detailed analysis including:
+    1. Information density (0.0-1.0): How rich in facts and information the text is
+    2. Topic coherence (0.0-1.0): How focused and well-structured the content is
+    3. Complexity (0.0-1.0): How technically complex or conceptually difficult the content is
+    4. Question potential: Estimate how many high-quality questions of each type could be generated:
+       - Factual questions (direct information from text)
+       - Inferential questions (connections between pieces of information)
+       - Conceptual questions (broader principles, ideas, implications)
+    5. Key concepts: List 3-7 important concepts, terms, or ideas from the text
+    
+    Return your analysis in the following JSON format, with a specific example shown below:
+
+    ```json
+    {
+        "information_density": 0.85,
+        "topic_coherence": 0.92,
+        "complexity": 0.76,
+        "estimated_question_yield": {
+            "factual": 8,
+            "inferential": 5,
+            "conceptual": 3
+        },
+        "key_concepts": ["photosynthesis", "carbon fixation", "light-dependent reactions", "cellular respiration", "chloroplasts"],
+        "notes": "The passage contains detailed scientific explanations with strong cause-effect relationships that would support excellent inferential questions."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches this exact format. Adjust values based on the actual content provided.
+  description: "Analyzes a text chunk for information density and educational value"
+  json_output: true
+  system_prompt: "You are an expert educational content analyst with a PhD in curriculum development. You evaluate text for its educational potential, information richness, and suitability for generating high-quality assessment questions. Your analysis is precise, objective, and quantitative where appropriate."
+  model_preference: "gpt-4"
+  temperature: 0.2
+
+chunk_classification:
+  template: |
+    Classify the following text passage by subject area and educational level.
+    
+    Text passage:
+    ---
+    {chunk_content}
+    ---
+    
+    Identify the primary subject area(s), appropriate educational level, and complexity.
+    
+    For subject areas, use standard academic classifications (e.g., Biology, World History, Computer Science, Organic Chemistry, Macroeconomics).
+    
+    For educational level, choose the most appropriate from:
+    - elementary (grades K-5)
+    - middle_school (grades 6-8)
+    - high_school (grades 9-12)
+    - undergraduate (college level)
+    - graduate (master's or doctorate level)
+    - professional (specialized career training)
+    
+    Return your analysis in the following JSON format, with an example shown below:
+
+    ```json
+    {
+        "primary_subject": "Molecular Biology",
+        "secondary_subjects": ["Biochemistry", "Genetics"],
+        "educational_level": "undergraduate",
+        "complexity": 0.78,
+        "specialized_knowledge_required": true,
+        "reasoning": "The passage discusses DNA replication mechanisms in detailed molecular terms, referring to enzymes and biochemical processes that are typically covered in undergraduate biology courses. The technical vocabulary and concepts presented would require prior knowledge in basic biology and chemistry."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches this exact format. Adjust values based on the actual content provided.
+  description: "Classifies a text chunk by subject area and educational level"
+  json_output: true
+  system_prompt: "You are an expert curriculum specialist with extensive experience in academic content classification across disciplines and educational levels. Your assessments help match educational content to appropriate audiences and contexts."
+  temperature: 0.2

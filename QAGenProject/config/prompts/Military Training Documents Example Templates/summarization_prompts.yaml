@@ -1,0 +1,76 @@
+# Military training manual summarization prompts.
+
+training_manual_summary:
+  template: |
+    Create a comprehensive summary of the following military training manual section:
+    
+    Manual Title: {title}
+    Manual Type: {doc_type}
+    
+    Content:
+    ---
+    {content}
+    ---
+    
+    Provide a military training summary that:
+    1. Identifies the primary tactical or technical concepts, procedures, and principles
+    2. Highlights key operational considerations, constraints, and planning factors
+    3. Summarizes critical safety information and mission-essential tasks
+    4. Organizes the information in a clear, sequential format appropriate for military personnel
+    5. Is approximately 250-350 words in length
+    
+    Example of expected summary format and style:
+
+    "This section of FM 3-21.8 details squad-level patrolling operations with emphasis on reconnaissance patrol planning and execution. The manual establishes five essential planning considerations: detailed intelligence preparation, proper selection of patrol members based on mission requirements, comprehensive rehearsals, redundant communications plans, and detailed contingency planning.
+
+    The reconnaissance patrol framework follows a five-phase structure: planning, insertion, execution, extraction, and debriefing. During planning, leaders must conduct thorough terrain analysis using OAKOC factors and establish specific information requirements (SIRs) that align with the commander's critical information requirements (CCIRs). The manual specifies that patrol orders must be issued no less than 2/3 of available time before execution.
+
+    For patrol movement, the manual prescribes three primary formations (diamond, wedge, and file) with specific criteria for selecting each based on terrain and enemy situation. It establishes maximum engagement distances (50-200m depending on terrain) and immediate action drills for various contingencies. Communication protocols require situation reports (SITREPs) at four mandatory reporting points: crossing phase lines, reaching objectives, upon enemy contact, and at rally points.
+
+    Critical safety considerations include detailed rally point procedures, no-later-than return times, and actions on compromise. The patrol leader must establish primary and alternate rally points no more than 1km apart, each maintained for no less than 30 minutes before movement to alternates.
+
+    The manual emphasizes that reconnaissance patrols avoid enemy contact unless required by mission parameters and maintains that preservation of patrol integrity takes precedence over information collection when compromise occurs."
+    
+    Return only the military training summary without additional commentary, introductions, or meta-descriptions.
+  description: "Creates a comprehensive military training manual summary"
+  json_output: false
+  system_prompt: "You are a senior military training developer with extensive experience in doctrine development and tactical instruction. You excel at distilling complex military procedures into clear, actionable summaries that preserve critical operational details while emphasizing key tactical principles."
+  temperature: 0.4
+
+tactical_procedure_summary:
+  template: |
+    Create a concise tactical procedure summary of the following military training content:
+    
+    Content:
+    ---
+    {chunk_content}
+    ---
+    
+    Provide a summary that:
+    1. Identifies the tactical procedure, its purpose, and operational context
+    2. Outlines the sequential steps or phases in proper tactical order
+    3. Highlights critical decision points, control measures, and command responsibilities
+    4. Emphasizes safety considerations and mission-essential requirements
+    5. Is approximately 75-100 words in length
+    6. Uses proper military terminology and tactical language
+    
+    Example of expected summary format and style:
+
+    "PROCEDURE: Tactical Combat Casualty Care (TCCC) - Care Under Fire Phase
+    
+    PURPOSE: Provide lifesaving intervention during direct hostile contact while minimizing additional casualties.
+    
+    EXECUTION:
+    1. Return fire and seek cover; direct casualty to do same if able
+    2. Assess for massive hemorrhage
+    3. Apply tourniquet for life-threatening extremity bleeding (high & tight on limb)
+    4. Position casualty to maintain airway (recovery position)
+    5. Move casualty to cover when tactically feasible using appropriate drag/carry technique
+    
+    CRITICAL FACTORS: Maintain tactical superiority before rendering aid. Apply tourniquets over uniform with 2-3" above wound site. Document time of application. Do not attempt CPR during this phase."
+    
+    Return only the requested tactical procedure summary without additional commentary, introductions, or meta-descriptions.
+  description: "Creates a concise summary of a military tactical procedure"
+  json_output: false
+  system_prompt: "You are a military tactics instructor with combat experience and training development expertise. You excel at creating clear, concise summaries of tactical procedures that highlight the essential steps, decision points, and critical considerations in proper tactical sequence."
+  temperature: 0.3

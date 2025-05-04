@@ -1,0 +1,109 @@
+# Question generation prompt templates for different question types.
+
+factual_questions:
+  template: |
+    Generate {num_questions} high-quality factual questions based on the following text passage.
+    
+    Text passage:
+    ---
+    {chunk_content}
+    ---
+    
+    Analysis:
+    {analysis}
+    
+    Key concepts from analysis: {key_concepts}
+    
+    Create questions that:
+    - Test direct knowledge of specific facts from the text
+    - Have clear, unambiguous answers that can be directly cited from the passage
+    - Vary in difficulty and focus on different parts of the content
+    - Include a comprehensive answer that fully addresses the question
+    - Use proper terminology from the domain when appropriate
+    
+    Format each Q&A pair EXACTLY as shown in these examples:
+
+    ```
+    Q: What are the three main components of photosynthesis mentioned in the passage?
+    A: According to the passage, the three main components of photosynthesis are the light-dependent reactions, the Calvin cycle (also called the light-independent reactions), and carbon fixation. These processes work together to convert light energy into chemical energy stored in glucose molecules.
+    
+    Q: How many ATP molecules are produced during the electron transport chain phase of cellular respiration?
+    A: The passage states that the electron transport chain phase of cellular respiration produces 32-34 ATP molecules. This represents approximately 90% of the total ATP generated during the entire cellular respiration process.
+    ```
+    
+    Return ONLY the specified number of questions and answers in the exact format shown, without numbering, additional commentary, or explanations. Ensure each question focuses on different content from the passage.
+  description: "Generates factual questions based on direct information from the text"
+  json_output: false
+  system_prompt: "You are an expert educator with years of experience creating high-quality assessment materials. You specialize in crafting clear, precise factual questions that effectively test comprehension of specific information while avoiding ambiguity or confusion."
+  model_preference: "gpt-4"
+  temperature: 0.7
+
+inferential_questions:
+  template: |
+    Generate {num_questions} high-quality inferential questions based on the following text passage.
+    
+    Text passage:
+    ---
+    {chunk_content}
+    ---
+    
+    Analysis:
+    {analysis}
+    
+    Create questions that:
+    - Require connecting multiple pieces of information from the text
+    - Ask for implications, relationships, or conclusions not explicitly stated
+    - Encourage analytical thinking and drawing connections
+    - Include a comprehensive answer that clearly explains the inference process
+    - Demonstrate the logical steps needed to arrive at the answer
+    
+    Format each Q&A pair EXACTLY as shown in these examples:
+
+    ```
+    Q: Based on the passage's description of coral reef decline, what might happen to coastal communities if current warming trends continue?
+    A: While not explicitly stated, the passage indicates that coral reefs provide coastal protection by absorbing wave energy and preventing erosion. It also mentions that reefs support local fisheries. If warming trends continue to cause coral bleaching and death as described, coastal communities would likely experience increased shoreline erosion, greater vulnerability to storm damage, and significant declines in fish populations that sustain local economies and food security.
+    
+    Q: How might the economic principles described in the passage explain the market failures observed in the healthcare industry?
+    A: The passage explains that markets fail when information asymmetry exists between buyers and sellers. By connecting this concept to healthcare, we can infer that patients (buyers) typically have far less medical knowledge than providers (sellers), creating a significant information asymmetry. This would explain why healthcare markets often don't follow standard supply-demand efficiency models, leading to issues like supplier-induced demand, price opacity, and the necessity for regulatory intervention as mentioned in the latter part of the passage.
+    ```
+    
+    Return ONLY the specified number of questions and answers in the exact format shown, without numbering, additional commentary, or explanations. Ensure each question requires different inferential skills or focuses on different content.
+  description: "Generates inferential questions requiring connections between information"
+  json_output: false
+  system_prompt: "You are an expert educator specializing in developing critical thinking skills. You excel at creating inferential questions that require students to connect ideas, analyze relationships, and draw logical conclusions from text, promoting deeper understanding beyond surface-level facts."
+  temperature: 0.7
+
+conceptual_questions:
+  template: |
+    Generate {num_questions} high-quality conceptual questions based on the following text passage.
+    
+    Text passage:
+    ---
+    {chunk_content}
+    ---
+    
+    Analysis:
+    {analysis}
+    
+    Create questions that:
+    - Address broader principles, theories, or ideas from the text
+    - Explore implications beyond the immediate context
+    - Encourage critical thinking about the fundamental concepts
+    - May involve hypothetical scenarios, comparisons, evaluations, or applications to new contexts
+    - Include a comprehensive answer that thoroughly explains the conceptual framework and reasoning
+    
+    Format each Q&A pair EXACTLY as shown in these examples:
+
+    ```
+    Q: How does the concept of monetary policy described in the passage reflect the tension between short-term economic stability and long-term structural growth?
+    A: The passage describes monetary policy as a tool central banks use to influence economic activity through interest rate adjustments and money supply. This reflects the fundamental tension between short-term stability and long-term growth because, as explained in the text, lowering interest rates can stimulate immediate economic activity but potentially create asset bubbles or inflation over time. Conversely, focusing solely on long-term structural growth might require allowing short-term corrections that are politically difficult. This illustrates the broader economic principle that policy tools often involve tradeoffs between different timeframes and between different stakeholders in the economy.
+    
+    Q: Given the ecological principles outlined in the passage, how might we reconceptualize urban development to better align with natural systems?
+    A: The ecological principles in the passage emphasize biodiversity, energy flow through trophic levels, and the interconnectedness of species in a resilient ecosystem. Applying these concepts to urban development would require a fundamental shift from linear resource use (extract-use-dispose) to circular systems that mimic natural cycles. Cities could be reconceptualized as ecosystems where waste becomes input for other processes, energy flows are optimized through decentralized renewable sources, and diversity (both biological and functional) is prioritized. The passage's emphasis on keystone species suggests we should identify and strengthen "keystone" elements in urban environments—perhaps community spaces or multi-functional infrastructure—that disproportionately support system resilience.
+    ```
+    
+    Return ONLY the specified number of questions and answers in the exact format shown, without numbering, additional commentary, or explanations. Ensure each question explores different conceptual dimensions or principles from the text.
+  description: "Generates conceptual questions on broader principles and ideas"
+  json_output: false
+  system_prompt: "You are an expert educator with advanced degrees in philosophy of education and learning theory. You specialize in creating conceptual questions that challenge students to engage with fundamental principles, apply abstract ideas to new contexts, and think critically about the deeper implications of subject matter."
+  temperature: 0.7

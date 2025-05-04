@@ -1,7 +1,10 @@
+# filename: semantic_qa_gen/output/adapters/csv.py
+
 """CSV format adapter for output formatting."""
 
 import csv
 import os
+import json # For serializing complex metadata/stats if needed
 from typing import Dict, List, Any, Optional
 
 from semantic_qa_gen.output.formatter import FormatAdapter
@@ -10,31 +13,30 @@ from semantic_qa_gen.utils.error import OutputError
 
 class CSVAdapter(FormatAdapter):
     """
-    Format adapter for CSV output.
-    
-    This adapter formats question-answer pairs as CSV for easy import
-    into spreadsheets and other data processing tools.
+    Format adapter for CSV output. Writes questions to a main CSV file,
+    and optionally statistics to a separate stats file.
     """
-    
+
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the CSV adapter.
-        
+
         Args:
-            config: Optional configuration dictionary.
+            config: Optional configuration dictionary (expects OutputConfig structure).
         """
         super().__init__(config)
         self.delimiter = self.config.get('csv_delimiter', ',')
         self.quotechar = self.config.get('csv_quotechar', '"')
+        # Fetch CSV specific options
+        self.include_doc_info = self.config.get('csv_include_document_info', False) # Default False
+        self.include_stats = self.config.get('include_statistics', True)
+
 
     def format(self, questions: List[Dict[str, Any]],
                document_info: Dict[str, Any],
                statistics: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Format question-answer pairs for CSV output.
-
-        Since CSV is a flat format, we need to structure the data differently.
-        We'll return a dictionary with the rows and headers.
+        Format question-answer pairs into lists suitable for CSV writing.
 
         Args:
             questions: List of question dictionaries.
@@ -42,148 +44,121 @@ class CSVAdapter(FormatAdapter):
             statistics: Processing statistics.
 
         Returns:
-            Dictionary with CSV rows and headers.
+            Dictionary containing 'headers' (list) and 'rows' (list of lists).
 
         Raises:
             OutputError: If formatting fails.
         """
         try:
-            # Create headers
             standard_headers = ['id', 'question', 'answer', 'category', 'chunk_id']
-
-            # Sample the first question to get additional metadata fields
-            metadata_headers = []
-            if questions and self.config.get('include_metadata', True):
-                if questions[0] and isinstance(questions[0], dict) and 'metadata' in questions[0]:
-                    # Extract metadata fields from the first question
-                    sample_metadata = questions[0].get('metadata', {})
-                    if isinstance(sample_metadata, dict):
-                        metadata_headers = list(sample_metadata.keys())
-
-            # Document info headers (prefixed for clarity)
+            # Simplify metadata handling: potentially serialize the whole metadata dict as JSON string
+            metadata_headers = ['metadata_json']
             doc_headers = []
-            if self.config.get('include_document_info', True) and document_info:
+            if self.include_doc_info:
+                # Flatten document info keys
                 doc_headers = [f"document_{key}" for key in document_info.keys()]
 
-            # Combined headers
             all_headers = standard_headers + metadata_headers + doc_headers
 
-            # Create rows
             rows = []
             for q in questions:
-                if not isinstance(q, dict):
-                    continue
+                if not isinstance(q, dict): continue # Skip invalid entries
 
                 # Standard fields
-                row = [
-                    q.get('id', ''),
-                    q.get('text', q.get('question', '')),  # Accept either text or question field
-                    q.get('answer', ''),
-                    q.get('category', ''),
-                    q.get('chunk_id', '')
-                ]
+                row_data = {
+                    'id': q.get('id', ''),
+                    'question': q.get('text', ''), # Use 'text' as canonical question field from dict
+                    'answer': q.get('answer', ''),
+                    'category': q.get('category', ''),
+                    'chunk_id': q.get('chunk_id', '')
+                }
 
-                # Add metadata fields
-                if metadata_headers:
-                    q_metadata = q.get('metadata', {})
-                    if isinstance(q_metadata, dict):
-                        for h in metadata_headers:
-                            row.append(q_metadata.get(h, ''))
-                    else:
-                        # Handle case where metadata is not a dict
-                        for h in metadata_headers:
-                            row.append('')
+                # Serialize metadata dict to JSON string
+                metadata = q.get('metadata', {})
+                try:
+                    metadata_json = json.dumps(metadata) if metadata else ""
+                except TypeError:
+                    metadata_json = json.dumps({"error": "cannot serialize metadata"}) # Fallback
+                row_data['metadata_json'] = metadata_json
 
-                # Add document info fields
-                if doc_headers and document_info:
-                    for key in document_info.keys():
-                        row.append(document_info.get(key, ''))
+                # Add document info if configured
+                if self.include_doc_info:
+                    for key, value in document_info.items():
+                         doc_key = f"document_{key}"
+                         # Ensure value is string representable for CSV
+                         row_data[doc_key] = str(value) if value is not None else ""
 
+                # Build row list in header order
+                row = [row_data.get(h, '') for h in all_headers]
                 rows.append(row)
 
+            # Return structured data for saving
             return {
                 'headers': all_headers,
                 'rows': rows,
-                'statistics': statistics  # Store this separately
+                # Pass stats through, saving handles writing separately
+                'statistics': statistics
             }
 
         except Exception as e:
-            raise OutputError(f"Failed to format CSV output: {str(e)}")
+             self.logger.error(f"Internal error formatting data for CSV: {e}", exc_info=True)
+             raise OutputError(f"Failed to structure CSV output rows: {str(e)}")
 
     def save(self, formatted_data: Dict[str, Any], output_path: str) -> str:
         """
-        Save CSV data to a file.
-        
+        Save the data rows as a CSV file. Optionally saves stats separately.
+
         Args:
-            formatted_data: Data formatted by the format method.
-            output_path: Path where to save the output.
-            
+            formatted_data: Dictionary returned by the format method ('headers', 'rows', 'statistics').
+            output_path: Full path where to save the main CSV file (including extension).
+
         Returns:
-            Path to the saved file.
-            
+            Path to the saved main CSV file.
+
         Raises:
-            OutputError: If saving fails.
+            OutputError: If file writing fails.
         """
         try:
-            # Ensure the file extension is correct
-            if not output_path.endswith(self.file_extension):
-                output_path = f"{output_path}{self.file_extension}"
-                
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-                
+            # Directory creation handled by OutputFormatter
             # Write the main CSV file
             with open(output_path, 'w', newline='', encoding='utf-8') as file:
-                writer = csv.writer(file, delimiter=self.delimiter, quotechar=self.quotechar)
-                
-                # Write headers
-                writer.writerow(formatted_data['headers'])
-                
-                # Write data rows
-                for row in formatted_data['rows']:
-                    writer.writerow(row)
-            
-            # If configured, write statistics to a separate file
-            if self.config.get('include_statistics', True):
-                stats_path = f"{os.path.splitext(output_path)[0]}_stats.csv"
-                self._write_statistics(formatted_data['statistics'], stats_path)
-                
-            return output_path
-            
+                writer = csv.writer(
+                    file,
+                    delimiter=self.delimiter,
+                    quotechar=self.quotechar,
+                    quoting=csv.QUOTE_MINIMAL # Quote only when necessary
+                 )
+                writer.writerow(formatted_data.get('headers', []))
+                writer.writerows(formatted_data.get('rows', []))
+
+            # Conditionally write statistics to a separate file
+            if self.include_stats and 'statistics' in formatted_data:
+                stats_path_base = os.path.splitext(output_path)[0]
+                stats_path = f"{stats_path_base}_stats.json" # Save stats as JSON for easier parsing
+                self._write_statistics_json(formatted_data['statistics'], stats_path)
+
+            return output_path # Return the path of the main saved file
+
+        except (IOError, OSError) as e:
+             self.logger.error(f"File write error saving CSV to {output_path}: {e}")
+             raise OutputError(f"Failed to write CSV output file: {str(e)}")
         except Exception as e:
-            raise OutputError(f"Failed to save CSV output: {str(e)}")
-    
-    def _write_statistics(self, statistics: Dict[str, Any], output_path: str) -> None:
-        """
-        Write statistics to a separate CSV file.
-        
-        Args:
-            statistics: Statistics dictionary.
-            output_path: Path where to save the statistics.
-            
-        Raises:
-            OutputError: If saving fails.
-        """
+             self.logger.exception(f"Unexpected error saving CSV output to {output_path}: {e}", exc_info=True)
+             raise OutputError(f"Unexpected error saving CSV output: {str(e)}")
+
+    # Changed to save stats as JSON for better structure preservation
+    def _write_statistics_json(self, statistics: Dict[str, Any], output_path: str) -> None:
+        """Write statistics dictionary to a JSON file."""
         try:
-            with open(output_path, 'w', newline='', encoding='utf-8') as file:
-                writer = csv.writer(file, delimiter=self.delimiter, quotechar=self.quotechar)
-                
-                # Write header
-                writer.writerow(['Statistic', 'Value'])
-                
-                # Write general statistics
-                for key, value in statistics.items():
-                    if isinstance(value, dict):
-                        # Handle nested dictionaries (like categories)
-                        for sub_key, sub_value in value.items():
-                            writer.writerow([f"{key}_{sub_key}", sub_value])
-                    else:
-                        writer.writerow([key, value])
-                        
+            with open(output_path, 'w', encoding='utf-8') as file:
+                json.dump(statistics, file, indent=2)
+            self.logger.info(f"Statistics saved separately to {output_path}")
         except Exception as e:
-            self.logger.error(f"Failed to write statistics file: {str(e)}")
-    
+            # Statistics saving is non-critical, just log error
+            self.logger.error(f"Failed to write separate statistics file to {output_path}: {str(e)}")
+
     @property
     def file_extension(self) -> str:
         """Get the file extension for CSV format."""
         return ".csv"
+

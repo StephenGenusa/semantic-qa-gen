@@ -12,32 +12,32 @@ from semantic_qa_gen.utils.error import LLMServiceError
 class PromptTemplate:
     """
     Template for LLM prompts with variable substitution.
-    
+
     Prompt templates allow for consistent prompt formatting with
     dynamic content insertion and metadata management.
     """
-    
+
     def __init__(self, template: str, metadata: Optional[Dict[str, Any]] = None):
         """
         Initialize a prompt template.
-        
+
         Args:
             template: Template string with {variable} placeholders.
             metadata: Optional metadata about the prompt.
         """
         self.template = template
         self.metadata = metadata or {}
-    
+
     def format(self, **kwargs) -> str:
         """
         Format the template by substituting variables.
-        
+
         Args:
             **kwargs: Variables to substitute.
-            
+
         Returns:
             Formatted prompt string.
-            
+
         Raises:
             KeyError: If a required variable is missing.
         """
@@ -53,29 +53,29 @@ class PromptTemplate:
 class PromptManager:
     """
     Manager for organizing and retrieving prompt templates.
-    
+
     This class handles loading prompt templates from files and
     providing them on demand for various LLM tasks.
     """
-    
+
     def __init__(self, prompts_dir: Optional[str] = None):
         """
         Initialize the prompt manager.
-        
+
         Args:
             prompts_dir: Optional directory for loading prompts.
         """
         self.prompts: Dict[str, PromptTemplate] = {}
         self.logger = logging.getLogger(__name__)
-        
+
         # Default prompts directory within the package
         self.prompts_dir = prompts_dir or os.path.join(
             os.path.dirname(__file__), "templates"
         )
-        
+
         # Register built-in prompts
         self._register_builtin_prompts()
-    
+
     def _register_builtin_prompts(self) -> None:
         """Register built-in prompt templates."""
         # Load from YAML files if directory exists
@@ -87,7 +87,7 @@ class PromptManager:
                         self._load_from_file(path)
                     except Exception as e:
                         self.logger.error(f"Failed to load prompt from {filename}: {str(e)}")
-        
+
         # Register fallback prompts if none were loaded
         if not self.prompts:
             self._register_fallback_prompts()

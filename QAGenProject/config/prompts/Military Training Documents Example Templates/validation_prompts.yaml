@@ -1,0 +1,152 @@
+# Military training validation prompt templates.
+
+doctrinal_accuracy:
+  template: |
+    Evaluate the doctrinal accuracy of this training question and answer pair based on the source manual content.
+    
+    Source manual content:
+    ---
+    {chunk_content}
+    ---
+    
+    Question: {question}
+    
+    Answer: {answer}
+    
+    Carefully analyze the response for adherence to military doctrine, technical accuracy, and procedural correctness as presented in the source manual. Check for any discrepancies in terminology, sequence of actions, command relationships, or tactical principles.
+    
+    Provide your evaluation as a JSON object exactly like this example:
+
+    ```json
+    {
+      "doctrinally_accurate": false,
+      "confidence": 0.92,
+      "doctrinal_issues": [
+        "The answer states that the platoon leader issues the FRAGORD, but the manual specifies this is the company commander's responsibility",
+        "The sequence of actions for establishing the support by fire position is incorrect per FM 3-21.8",
+        "The stated effective range of the M240B is incorrect (manual states 1,100m for area targets but answer says 1,500m)"
+      ],
+      "suggestions": "Correct the command relationship to show company commander issuing the FRAGORD. Revise the sequence of actions according to page 4-23 of the manual. Update the M240B effective range to 1,100m for area targets as stated in the weapons appendix.",
+      "reasoning": "The response contains critical doctrinal errors that contradict established procedures in the source manual. These discrepancies would create confusion in training and potentially lead to incorrect tactical execution. Command relationships and weapons capabilities must be accurately represented according to current doctrine."
+    }
+    ```
+
+    OR:
+
+    ```json
+    {
+      "doctrinally_accurate": true,
+      "confidence": 0.96,
+      "doctrinal_issues": [],
+      "suggestions": "While doctrinally accurate, the answer could be enhanced by mentioning the specific criteria for determining breach point selection as listed in paragraph 3-45 of the manual.",
+      "reasoning": "The response accurately reflects current doctrine for breaching operations as described in the source manual. It correctly presents the sequence of actions, command and control measures, and technical specifications. All procedures align with established military doctrine and tactical principles."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches one of these formats, adjusting content based on your actual evaluation.
+  description: "Validates doctrinal accuracy of training question-answer pairs"
+  json_output: true
+  system_prompt: "You are a senior military doctrine specialist with extensive experience in training development and doctrinal review. You have comprehensive knowledge of military tactics, techniques, and procedures across multiple domains and can quickly identify deviations from established doctrine."
+  temperature: 0.2
+
+training_completeness:
+  template: |
+    Evaluate the training completeness and educational value of this military training question and answer pair.
+    
+    Source manual content:
+    ---
+    {chunk_content}
+    ---
+    
+    Question: {question}
+    
+    Answer: {answer}
+    
+    Assess whether the question and answer adequately cover the critical training points from the manual and provide sufficient detail for skill development. Consider tactical principles, procedural steps, safety considerations, and command and control aspects.
+    
+    Provide your evaluation as a JSON object exactly like this example:
+
+    ```json
+    {
+      "training_complete": false,
+      "educational_value_score": 0.65,
+      "missing_elements": [
+        "No mention of required communication procedures during the operation",
+        "Missing critical safety checks for demolition employment",
+        "Fails to address actions on enemy contact during the procedure",
+        "No discussion of tactical contingency planning as required in the manual",
+        "Omits specific leadership responsibilities at each phase"
+      ],
+      "suggestions": "Add communication procedures including proper reports to higher headquarters. Include the safety checks from page 4-28 of the manual. Address actions on contact during the operation as specified in section 2-15. Incorporate tactical contingency planning elements. Specify leadership responsibilities for squad leader, team leaders, and attachment leaders.",
+      "reasoning": "While the answer covers the basic procedural steps, it lacks critical elements required for tactical implementation. The manual explicitly states these missing elements are essential for mission success and personnel safety. Without addressing communications, safety, and contingency actions, the training value is significantly diminished."
+    }
+    ```
+
+    OR:
+
+    ```json
+    {
+      "training_complete": true,
+      "educational_value_score": 0.94,
+      "missing_elements": [],
+      "suggestions": "Consider including the alternative method for target reference points described on page 3-17 to enhance the comprehensiveness of the training material.",
+      "reasoning": "The answer thoroughly covers all mission-essential elements specified in the manual. It correctly addresses procedures, safety considerations, equipment employment, communications protocols, and leadership responsibilities. The sequence and technical details are accurately presented, creating high training value for the intended audience."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches one of these formats, adjusting content based on your actual evaluation.
+  description: "Evaluates training completeness and educational value of military Q&A pairs"
+  json_output: true
+  system_prompt: "You are a senior military training developer with extensive experience in instructional design and combat training. You excel at identifying gaps in training materials that could impact skill development, mission effectiveness, or safety. Your evaluations ensure training objectives are met and all critical elements are addressed."
+  temperature: 0.2
+
+tactical_soundness:
+  template: |
+    Evaluate the tactical soundness and operational validity of the procedures or decisions described in this training question and answer pair.
+    
+    Source manual content:
+    ---
+    {chunk_content}
+    ---
+    
+    Question: {question}
+    
+    Answer: {answer}
+    
+    Assess whether the tactical approach or procedure described is sound from an operational perspective. Consider principles of war, tactical best practices, risk management, and operational effectiveness.
+    
+    Provide your evaluation as a JSON object exactly like this example:
+
+    ```json
+    {
+      "tactically_sound": false,
+      "operational_validity_score": 0.53,
+      "tactical_issues": [
+        "The described maneuver exposes the element to unnecessary risk by crossing the linear danger area at a single point",
+        "The answer fails to incorporate proper security during movement as described in the manual",
+        "The communications plan creates unnecessary electromagnetic signature",
+        "No consideration of adjacent unit coordination for the operation",
+        "The described timeline does not allow sufficient planning time per doctrinal standards"
+      ],
+      "suggestions": "Revise the danger area crossing to incorporate multiple crossing points with proper overwatching elements. Add security elements to the movement formation. Implement proper communications security measures including minimizing transmissions. Include adjacent unit coordination procedures. Adjust the timeline to allow for the planning factors specified in paragraph 2-34 of the manual.",
+      "reasoning": "The described tactical approach violates several fundamental principles outlined in the source manual. It creates unnecessary risk to the force, fails to implement proper security measures, and doesn't follow established planning timelines. These issues would significantly impact operational effectiveness and force protection."
+    }
+    ```
+
+    OR:
+
+    ```json
+    {
+      "tactically_sound": true,
+      "operational_validity_score": 0.92,
+      "tactical_issues": [],
+      "suggestions": "While tactically sound, the approach could be enhanced by incorporating the terrain analysis matrix from appendix B of the manual to provide a more structured decision-making process.",
+      "reasoning": "The described tactical approach demonstrates sound application of doctrinal principles from the source manual. It properly balances mission accomplishment with force protection, incorporates appropriate security measures, maintains proper command and control, and follows established planning procedures. The operational approach would be effective in the described scenario."
+    }
+    ```
+
+    Ensure your response is valid JSON that matches one of these formats, adjusting content based on your actual evaluation.
+  description: "Evaluates tactical soundness and operational validity of military procedures"
+  json_output: true
+  system_prompt: "You are a senior military operations officer with extensive combat experience and formal tactical training. You excel at evaluating the operational validity of tactical procedures, identifying flaws in tactical approaches, and ensuring training materials reflect sound tactical principles that balance mission accomplishment with force protection."
+  temperature: 0.2

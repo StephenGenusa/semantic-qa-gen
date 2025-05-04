@@ -1,0 +1,103 @@
+# # Schema version for future compatibility.
+version: '1.0'
+document:
+  loaders:
+    text:
+# # Enable/disable this loader.
+      enabled: true
+      encoding: utf-8
+    pdf:
+# # Enable/disable this loader.
+      enabled: true
+      extract_images: false
+      detect_headers_footers: true
+      fix_cross_page_sentences: true
+      preserve_page_numbers: true
+    markdown:
+# # Enable/disable this loader.
+      enabled: true
+      extract_metadata: true
+      encoding: utf-8
+    docx:
+# # Enable/disable this loader.
+      enabled: true
+      extract_images: false
+  normalize_whitespace: true
+  fix_encoding_issues: true
+  fix_formatting_issues: true
+chunking:
+# # Chunking strategy ('semantic', 'fixed_size').
+  strategy: semantic
+# # Approximate target size (chars/tokens depend on strategy).
+  target_chunk_size: 1500
+# # Size of overlap between chunks (chars/tokens depend on strategy).
+  overlap_size: 150
+# # Whether to attempt splitting chunks before major headings (semantic strategy).
+  preserve_headings: true
+# # Minimum size for a chunk (used in optimization/strategies).
+  min_chunk_size: 500
+# # Maximum size for a chunk (used in optimization/strategies).
+  max_chunk_size: 2500
+llm_services: {}
+question_generation:
+# # Configuration for different question categories.
+  categories:
+    factual:
+      min_questions: 2
+      weight: 1.0
+    inferential:
+      min_questions: 2
+      weight: 1.2
+    conceptual:
+      min_questions: 1
+      weight: 1.5
+# # Maximum total questions allowed per chunk.
+  max_questions_per_chunk: 10
+# # Enable adaptive question count based on chunk analysis (density).
+  adaptive_generation: true
+validation:
+  factual_accuracy:
+    enabled: true
+    threshold: 0.7
+  answer_completeness:
+    enabled: true
+    threshold: 0.7
+  question_clarity:
+    enabled: true
+    threshold: 0.7
+  diversity:
+    enabled: true
+# # Similarity threshold (e.g., SequenceMatcher ratio) ABOTE which questions are rejected by this validator.
+    threshold: 0.85
+output:
+# # Output format ('json', 'csv').
+  format: json
+# # Include document and processing metadata in output file.
+  include_metadata: true
+# # Include processing statistics in output file (may be separate file for CSV).
+  include_statistics: true
+# # Directory to save output files.
+  output_dir: ./output
+# # Indentation level for JSON output (None for compact).
+  json_indent: 2
+# # Ensure JSON output only contains ASCII characters.
+  json_ensure_ascii: false
+# # Delimiter character for CSV output.
+  csv_delimiter: ','
+# # Quote character for CSV output.
+  csv_quotechar: '"'
+# # Include document metadata columns in CSV output (can make CSV large).
+  csv_include_document_info: false
+processing:
+# # Maximum concurrent asynchronous operations (e.g., LLM calls).
+  concurrency: 3
+# # Enable saving/resuming progress using checkpoints.
+  enable_checkpoints: true
+# # Save checkpoint after every N chunks processed.
+  checkpoint_interval: 10
+# # Directory to store checkpoint files.
+  checkpoint_dir: ./temp/checkpoints
+# # Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+  log_level: INFO
+# # Enable debug mode (more verbose logging, potentially saves failed LLM inputs/outputs).
+  debug_mode: false

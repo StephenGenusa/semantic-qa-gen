@@ -1,0 +1,61 @@
+# Summarization prompts for document and content processing.
+
+document_summary:
+  template: |
+    Create a comprehensive summary of the following document:
+    
+    Document Title: {title}
+    Document Type: {doc_type}
+    
+    Content:
+    ---
+    {content}
+    ---
+    
+    Provide a summary that:
+    1. Captures the main topics and key information in order of importance
+    2. Identifies central themes, arguments, and key findings
+    3. Presents the information in a logical, coherent structure
+    4. Is approximately 250-300 words in length
+    5. Maintains objectivity while accurately representing the document's perspective
+    
+    Example of expected summary format and style:
+
+    "This paper examines the effects of climate change on marine ecosystems, with particular focus on coral reef degradation. The authors present evidence from a 15-year longitudinal study across 35 reef sites, demonstrating that rising ocean temperatures have caused a 47% decline in coral coverage. Key findings include the identification of three threshold temperatures that trigger different levels of coral bleaching, and the discovery that certain coral species (particularly those in the Acropora genus) show greater resilience when in proximity to seagrass meadows.
+
+    The document outlines several mechanisms underlying this relationship, including the role of seagrasses in reducing local acidification and providing habitat for symbiotic organisms that benefit coral health. Statistical analysis reveals strong correlation (r=0.78) between seagrass proximity and coral survival rates during bleaching events.
+
+    The authors propose a new model for reef conservation that integrates seagrass restoration with traditional coral protection measures. They argue that current conservation approaches focusing solely on temperature mitigation are insufficient without addressing ecosystem relationships. The paper concludes with policy recommendations for marine protected area design and suggests specific restoration techniques that have shown promise in pilot programs in Thailand and Australia.
+
+    Methodologically, the study combines field measurements, satellite data, and laboratory experiments, addressing previous research limitations regarding seasonal variations in water chemistry. The authors acknowledge funding limitations that prevented more extensive genetic analysis of resilient coral populations."
+    
+    Return only the summary without additional commentary, introductions, or meta-descriptions.
+  description: "Creates a comprehensive document summary"
+  json_output: false
+  system_prompt: "You are an expert in information synthesis with experience in academic publishing, technical writing, and knowledge management. You excel at distilling complex documents into clear, accurate summaries that preserve key information and central arguments while eliminating redundancy."
+  temperature: 0.4
+
+chunk_summary:
+  template: |
+    Create a concise, informative summary of the following text chunk:
+    
+    Content:
+    ---
+    {chunk_content}
+    ---
+    
+    Provide a summary that:
+    1. Captures the essential information and main points
+    2. Is approximately 50-75 words in length
+    3. Maintains technical accuracy while being accessible
+    4. Preserves key terminology from the original text
+    
+    Example of expected summary format and style:
+
+    "The passage explains quantum entanglement as a phenomenon where paired particles maintain instantaneous connections regardless of distance. Einstein referred to this as 'spooky action at a distance.' The text details how Bell's Inequality experiments confirmed entanglement exists, contradicting local realism. The author emphasizes that while entanglement enables quantum computing applications, it cannot transmit information faster than light, maintaining consistency with relativity."
+    
+    Return only the requested summary without additional commentary, introductions, or meta-descriptions.
+  description: "Creates a concise summary of a text chunk"
+  json_output: false
+  system_prompt: "You are an expert in information distillation and clear technical communication. You excel at identifying the most important elements of a text and expressing them concisely while maintaining accuracy and precision."
+  temperature: 0.3

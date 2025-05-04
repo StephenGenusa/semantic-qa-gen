@@ -1,7 +1,10 @@
+# filename: semantic_qa_gen/output/adapters/json.py
+
 """JSON format adapter for output formatting."""
 
 import json
 import os
+import datetime # Keep for default metadata
 from typing import Dict, List, Any, Optional
 
 from semantic_qa_gen.output.formatter import FormatAdapter
@@ -10,94 +13,104 @@ from semantic_qa_gen.utils.error import OutputError
 
 class JSONAdapter(FormatAdapter):
     """
-    Format adapter for JSON output.
-    
-    This adapter formats question-answer pairs and related data
-    as JSON for easy consumption by other systems.
+    Format adapter for JSON output. Formats data as a single JSON object.
     """
-    
+
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the JSON adapter.
-        
+
         Args:
-            config: Optional configuration dictionary.
+            config: Optional configuration dictionary (expects OutputConfig structure).
         """
         super().__init__(config)
-        self.indent = self.config.get('indent', 2)
-        self.ensure_ascii = self.config.get('ensure_ascii', False)
-    
-    def format(self, questions: List[Dict[str, Any]], 
+        # Access config keys safely with defaults
+        self.indent = self.config.get('json_indent', 2)
+        self.ensure_ascii = self.config.get('json_ensure_ascii', False)
+        self.include_metadata = self.config.get('include_metadata', True)
+        self.include_stats = self.config.get('include_statistics', True)
+
+    def format(self, questions: List[Dict[str, Any]],
               document_info: Dict[str, Any],
               statistics: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Format question-answer pairs as a JSON-serializable dictionary.
-        
+        Structure the data into a dictionary suitable for JSON serialization.
+
         Args:
             questions: List of question dictionaries.
             document_info: Information about the source document.
             statistics: Processing statistics.
-            
+
         Returns:
             Dictionary structured for JSON output.
-            
+
         Raises:
-            OutputError: If formatting fails.
+            OutputError: If preparing the structure fails (unlikely here).
         """
         try:
-            # Create the output structure
+            # Create the core output structure
             output = {
                 "document": document_info,
                 "questions": questions,
-                "statistics": statistics
             }
-            
-            # Include metadata if configured
-            if self.config.get('include_metadata', True):
-                import datetime
-                output["metadata"] = {
-                    "generated_at": datetime.datetime.now().isoformat(),
+
+            # Conditionally include statistics
+            if self.include_stats:
+                output["statistics"] = statistics
+
+            # Conditionally include generator metadata
+            if self.include_metadata:
+                 output["generation_metadata"] = {
+                    "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "generator": "SemanticQAGen",
-                    "format_version": "1.0"
-                }
-                
+                    "format_version": "1.1" # Example version bump
+                 }
+
             return output
-            
-        except Exception as e:
-            raise OutputError(f"Failed to format JSON output: {str(e)}")
-    
+
+        except Exception as e: # Catch unexpected errors during dict creation
+             self.logger.error(f"Internal error formatting data for JSON: {e}", exc_info=True)
+             raise OutputError(f"Failed to structure JSON output data: {str(e)}")
+
     def save(self, formatted_data: Dict[str, Any], output_path: str) -> str:
         """
-        Save JSON data to a file.
-        
+        Save the dictionary data as a JSON file.
+
         Args:
-            formatted_data: Data formatted by the format method.
-            output_path: Path where to save the output.
-            
+            formatted_data: Dictionary returned by the format method.
+            output_path: Full path where to save the output file (including extension).
+
         Returns:
-            Path to the saved file.
-            
+            Path to the saved file (the input path).
+
         Raises:
-            OutputError: If saving fails.
+            OutputError: If JSON serialization or file writing fails.
         """
         try:
-            # Ensure the file extension is correct
-            if not output_path.endswith(self.file_extension):
-                output_path = f"{output_path}{self.file_extension}"
-                
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-                
-            # Write the file
+            # Directory creation is handled by OutputFormatter.save_to_file
+            # Write the file using json.dump
             with open(output_path, 'w', encoding='utf-8') as file:
-                json.dump(formatted_data, file, indent=self.indent, ensure_ascii=self.ensure_ascii)
-                
-            return output_path
-            
+                json.dump(
+                    formatted_data,
+                    file,
+                    indent=self.indent,
+                    ensure_ascii=self.ensure_ascii
+                 )
+            return output_path # Return the confirmed save path
+
+        except TypeError as e:
+            # More specific error for serialization issues
+             self.logger.error(f"JSON serialization failed for {output_path}: {e}. Check data types.", exc_info=True)
+             raise OutputError(f"Failed to serialize data to JSON: {str(e)}")
+        except (IOError, OSError) as e:
+             self.logger.error(f"File write error saving JSON to {output_path}: {e}")
+             raise OutputError(f"Failed to write JSON output file: {str(e)}")
         except Exception as e:
-            raise OutputError(f"Failed to save JSON output: {str(e)}")
-    
+            self.logger.exception(f"Unexpected error saving JSON to {output_path}: {e}", exc_info=True)
+            raise OutputError(f"Unexpected error saving JSON output: {str(e)}")
+
     @property
     def file_extension(self) -> str:
         """Get the file extension for JSON format."""
         return ".json"
+

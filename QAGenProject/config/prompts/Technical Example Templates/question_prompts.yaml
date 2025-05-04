@@ -1,0 +1,184 @@
+# Technical question generation templates for documentation and knowledge sharing.
+
+implementation_questions:
+  template: |
+    Generate {num_questions} high-quality implementation-focused questions based on the following technical content.
+    
+    Technical content:
+    ---
+    {chunk_content}
+    ---
+    
+    Analysis:
+    {analysis}
+    
+    Key technical concepts: {key_concepts}
+    
+    Create questions that:
+    - Focus on practical implementation details from the content
+    - Address specific technical procedures, methods, or techniques
+    - Have concrete, actionable answers with implementation specifics
+    - Include code examples, configuration settings, or command syntax where appropriate
+    - Vary in complexity across different technical aspects
+    
+    Format each Q&A pair EXACTLY as shown in these examples:
+
+    ```
+    Q: What configuration parameters must be set in the Kubernetes deployment manifest to implement the resource limits described in the content?
+    A: According to the content, the Kubernetes deployment manifest requires the following resource limit configurations:
+    ```yaml
+    resources:
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+    ```
+    Additionally, the content specifies that for production deployments, you should add the `ephemeral-storage` parameter with a minimum request of "1Gi" to prevent pod evictions during heavy write operations.
+    
+    Q: How would you implement the circuit breaker pattern described in the content using the provided Go library?
+    A: The implementation requires using the `gobreaker` library with custom timeout settings. Based on the content, here's the implementation:
+    ```go
+    import (
+      "github.com/sony/gobreaker"
+      "time"
+    )
+    
+    func newCircuitBreaker() *gobreaker.CircuitBreaker {
+      return gobreaker.NewCircuitBreaker(gobreaker.Settings{
+        Name:        "api-service",
+        MaxRequests: 5,
+        Interval:    10 * time.Second,
+        Timeout:     30 * time.Second,
+        ReadyToTrip: func(counts gobreaker.Counts) bool {
+          failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+          return counts.Requests >= 10 && failureRatio >= 0.6
+        },
+        OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
+          // Log state change or trigger alerts
+          log.Printf("Circuit breaker %s changed from %v to %v", name, from, to)
+        },
+      })
+    }
+    ```
+    The content emphasizes setting the `ReadyToTrip` function to trigger after at least 10 requests with a 60% failure ratio to avoid premature circuit breaking during application startup.
+    ```
+    
+    Return ONLY the specified number of questions and answers in the exact format shown, without numbering, additional commentary, or explanations. Ensure each question focuses on different implementation aspects from the content.
+  description: "Generates implementation-focused questions from technical content"
+  json_output: false
+  system_prompt: "You are a senior software engineer and technical lead with extensive hands-on implementation experience. You excel at creating practical, code-focused questions that test understanding of technical implementation details and best practices."
+  model_preference: "gpt-4"
+  temperature: 0.7
+
+architectural_questions:
+  template: |
+    Generate {num_questions} high-quality architecture-focused questions based on the following technical content.
+    
+    Technical content:
+    ---
+    {chunk_content}
+    ---
+    
+    Analysis:
+    {analysis}
+    
+    Create questions that:
+    - Focus on system design, component relationships, and architectural patterns
+    - Address trade-offs, scalability considerations, and design decisions
+    - Require understanding of how components interact and relate to each other
+    - Include comprehensive answers that explain architectural reasoning
+    - Cover various aspects of the architecture described in the content
+    
+    Format each Q&A pair EXACTLY as shown in these examples:
+
+    ```
+    Q: What are the key architectural components in the event-driven system described in the content, and how do they address the consistency challenges in distributed transaction processing?
+    A: The architecture consists of five key components: Event Producer, Event Bus, Event Store, Event Processors, and Saga Orchestrator. The content explains that these components work together to address consistency challenges through eventual consistency rather than ACID transactions.
+
+    The Event Producer publishes domain events to the Event Bus when state changes occur. The Event Bus (implemented with Kafka according to the content) provides guaranteed delivery and ordering within partitions. The Event Store persists all events as an immutable log, enabling event replay and system recovery. Event Processors consume events asynchronously to update projections or trigger workflows. The Saga Orchestrator manages distributed transactions by coordinating compensating actions when steps fail.
+
+    This architecture addresses consistency challenges by breaking down distributed transactions into local transactions plus messages, using the outbox pattern (explicitly mentioned in section 3.2) to atomically update state and publish events. The content emphasizes that this approach trades immediate consistency for system resilience and partition tolerance, following the CAP theorem trade-offs discussed in the performance considerations section.
+    
+    Q: How does the layered security architecture described in the content implement defense-in-depth principles, and what are the performance implications of this approach?
+    A: The layered security architecture implements defense-in-depth through four distinct layers: Network Perimeter, Application Gateway, Service Mesh, and Application-level Controls.
+
+    At the Network Perimeter layer, the architecture uses a Web Application Firewall (WAF) and DDoS protection to filter malicious traffic before it reaches internal systems. The Application Gateway layer implements authentication, rate limiting, and request validation, with the content specifically describing the use of JWT validation and API key verification. The Service Mesh layer (implemented with Istio according to the content) provides mutual TLS between services, certificate rotation, and fine-grained access control policies. Finally, the Application-level Controls layer implements input validation, output encoding, and principle of least privilege.
+
+    Regarding performance implications, the content explicitly notes a 15-20ms latency overhead per request due to the security layers, with the Service Mesh contributing the largest portion (8-12ms). The architecture mitigates this through connection pooling, certificate caching, and selective bypass of certain layers for performance-critical internal traffic. The content recommends implementing circuit breakers with custom timeouts that account for this additional latency to prevent cascading failures during traffic spikes.
+    ```
+    
+    Return ONLY the specified number of questions and answers in the exact format shown, without numbering, additional commentary, or explanations. Ensure each question explores different architectural aspects from the technical content.
+  description: "Generates architectural questions from technical content"
+  json_output: false
+  system_prompt: "You are a principal solutions architect with extensive experience designing complex technical systems. You excel at creating questions that test understanding of architectural patterns, system design decisions, component interactions, and engineering trade-offs."
+  temperature: 0.7
+
+troubleshooting_questions:
+  template: |
+    Generate {num_questions} high-quality troubleshooting and problem-solving questions based on the following technical content.
+    
+    Technical content:
+    ---
+    {chunk_content}
+    ---
+    
+    Analysis:
+    {analysis}
+    
+    Create questions that:
+    - Present realistic technical problems or failure scenarios related to the content
+    - Test diagnostic reasoning and systematic debugging approaches
+    - Require identification of root causes and solution implementation
+    - Include comprehensive troubleshooting steps and solutions
+    - Cover different potential failure points or edge cases mentioned in the content
+    
+    Format each Q&A pair EXACTLY as shown in these examples:
+
+    ```
+    Q: A microservice in your distributed system is experiencing intermittent 503 Service Unavailable errors, but only during peak traffic periods. The logs show connection timeouts to a downstream dependency. Given the content's description of resilience patterns, how would you diagnose and resolve this issue?
+    A: Based on the content, this issue exhibits classic symptoms of a cascading failure due to missing resilience patterns. The diagnosis and resolution would involve:
+
+    1. Diagnosis steps:
+       - Verify timeout settings: The content mentions that the default 1-second connection timeout is too aggressive. Review the current timeout configuration.
+       - Check for retry storms: According to section 4.2 of the content, immediate retries during failures can amplify load on already struggling services.
+       - Examine connection pooling: The content specifies that default connection pool settings (20 connections) are insufficient for peak traffic.
+       - Monitor downstream dependency metrics: Check if the downstream service is experiencing high latency or errors.
+   
+    2. Resolution:
+       - Implement the circuit breaker pattern described in section 4.3, using the bulkhead isolation pattern to separate critical and non-critical downstream dependencies.
+       - Configure connection timeouts based on the p99 latency metrics plus a buffer (content recommends 500ms + 250ms buffer = 750ms for most internal services).
+       - Add jitter to retry logic using exponential backoff with the specific parameters from the content (initial backoff of 100ms with multiplier of 2 and jitter factor of 0.3).
+       - Increase connection pool size to handle peak load, with the content's formula: (concurrent requests × p99 latency × 1.5) / 1000.
+       - Implement the load shedding pattern from section 4.5 to reject excess requests rather than allowing them to overload the system.
+
+    The content specifically warns against only fixing the symptom (increasing timeouts) without addressing the underlying resilience architecture.
+    
+    Q: During deployment of a new feature, users report that some uploaded images are corrupted while others process correctly. The system logs show occasional "OptimisticLockException" errors in the storage service. Based on the content's data consistency patterns, what is likely happening and how would you fix it?
+    A: According to the content, this issue is characteristic of a race condition in the storage service caused by concurrent modifications without proper concurrency control.
+
+    The likely issue is that the image processing system is using the "last-write-wins" approach described in section 5.2 of the content, which can lead to data corruption when multiple processes attempt to modify the same resource concurrently.
+
+    Based on the content's data consistency patterns, the diagnosis and solution would be:
+
+    1. Diagnosis:
+       - The OptimisticLockException indicates that the storage service is detecting concurrent modification attempts but the application isn't handling these exceptions properly.
+       - Section 5.3 mentions that blob storage operations may appear atomic but can conflict when multiple services process the same image concurrently.
+       - The intermittent nature suggests a timing-dependent race condition rather than a systematic failure.
+
+    2. Solution:
+       - Implement the content's recommended "Compare-And-Swap" (CAS) pattern using ETags, storing the ETag received when the image is initially retrieved and including it with update operations.
+       - Add the idempotency pattern described in section 5.4, using a client-generated request ID that remains consistent across retries.
+       - Implement the proper retry logic for OptimisticLockException with exponential backoff (the content provides specific parameters in section 5.5).
+       - Consider implementing the two-phase commit pattern for critical uploads as described in section 5.6 if absolute consistency is required.
+       - Add a distributed lock with a lease timeout as described in the content (with recommended 30-second lease) to prevent concurrent processing of the same image.
+
+    The content emphasizes that for this specific scenario, optimistic concurrency control with ETags is preferred over pessimistic locking due to the performance impact of the latter.
+    ```
+    
+    Return ONLY the specified number of questions and answers in the exact format shown, without numbering, additional commentary, or explanations. Ensure each question presents different troubleshooting scenarios related to the technical content.
+  description: "Generates troubleshooting questions from technical content"
+  json_output: false
+  system_prompt: "You are a senior site reliability engineer with extensive experience in complex systems debugging and incident response. You excel at creating realistic troubleshooting scenarios that test diagnostic reasoning, methodical problem-solving, and technical knowledge application."
+  temperature: 0.7

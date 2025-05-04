@@ -1,205 +1,167 @@
-"""Memory-optimized question processor."""
+# filename: semantic_qa_gen/question/processor.py
+
+"""Processor for generating and validating questions for a single chunk."""
 
 import logging
 import asyncio
-import gc
 from typing import Dict, Any, Optional, List, Tuple
 
+# Project imports
 from semantic_qa_gen.config.manager import ConfigManager
 from semantic_qa_gen.document.models import Chunk, AnalysisResult, Question
 from semantic_qa_gen.question.generator import QuestionGenerator
 from semantic_qa_gen.question.validation.engine import ValidationEngine
-from semantic_qa_gen.utils.error import ValidationError
-from semantic_qa_gen.utils.progress import ProgressReporter
+from semantic_qa_gen.utils.error import ValidationError, LLMServiceError
+# Removed ProgressReporter import, belongs in pipeline orchestrator
 
 
 class QuestionProcessor:
     """
-    Memory-optimized processor for generating and validating questions.
+    Processes a single document chunk to generate and validate questions.
+
+    This class coordinates the generation of questions using QuestionGenerator
+    and their subsequent validation using ValidationEngine for a specific chunk.
+    Error handling is included to allow the main pipeline to continue processing
+    other chunks even if one fails. Memory optimizations like caching or
+    explicit GC are removed in favor of letting the pipeline manage iteration
+    and aggregation.
     """
-    
-    def __init__(self, 
-                config_manager: ConfigManager,
-                question_generator: QuestionGenerator,
-                validation_engine: ValidationEngine):
-        """Initialize the question processor."""
+
+    def __init__(self,
+                 config_manager: ConfigManager,
+                 question_generator: QuestionGenerator,
+                 validation_engine: ValidationEngine):
+        """
+        Initialize the question processor.
+
+        Args:
+            config_manager: Configuration manager instance.
+            question_generator: Instance of QuestionGenerator.
+            validation_engine: Instance of ValidationEngine.
+        """
         self.config_manager = config_manager
-        self.config = config_manager.get_section("question_generation")
+        # Config sections accessed by generator/validator internally as needed
         self.question_generator = question_generator
         self.validation_engine = validation_engine
         self.logger = logging.getLogger(__name__)
-        
-        # Cache to store chunks by ID for efficient retrieval
-        self._chunk_cache = {}
-    
-    async def process_chunk(self, 
-                          chunk: Chunk, 
-                          analysis: AnalysisResult,
-                          progress_reporter: Optional[ProgressReporter] = None) -> Tuple[List[Question], Dict[str, Any]]:
-        """Process a document chunk to generate and validate questions."""
-        stats = {
+        # Removed chunk cache and GC calls
+
+    async def process_chunk(self,
+                            chunk: Chunk,
+                            analysis: AnalysisResult) -> Tuple[List[Question], Dict[str, Any]]:
+        """
+        Process a single document chunk to generate and validate questions.
+
+        Handles the flow: Generate Questions -> Validate Questions -> Calculate Stats.
+        Catches errors during generation or validation for robustness.
+
+        Args:
+            chunk: The document chunk to process.
+            analysis: The pre-computed analysis result for the chunk.
+
+        Returns:
+            A tuple containing:
+            - list[Question]: A list of validated questions generated for this chunk.
+            - dict[str, Any]: Statistics specific to the processing of this chunk.
+                               (e.g., generated, valid, rejected counts).
+        """
+        chunk_stats = {
             "chunk_id": chunk.id,
             "generated_questions": 0,
-            "valid_questions": 0,
+            "validated_questions": 0, # Renamed from valid_questions for clarity
+            "valid_questions_final": 0, # Final count after filtering
             "rejected_questions": 0,
-            "categories": {
+            "errors": [],
+             "categories": { # Count valid questions by category
                 "factual": 0,
                 "inferential": 0,
                 "conceptual": 0
             }
+            # Add status: 'success', 'generation_failed', 'validation_failed'?
         }
-        
+        generated_questions: List[Question] = []
+        valid_questions: List[Question] = []
+
         try:
-            # Cache the chunk for efficient access
-            self._chunk_cache[chunk.id] = chunk
-            
-            # Update progress
-            if progress_reporter:
-                progress_reporter.update_progress(0, 2, {
-                    "stage": "question_generation",
-                    "chunk_id": chunk.id
-                })
-            
-            # Generate questions
-            generated_questions = await self.question_generator.generate_questions(
-                chunk=chunk, 
-                analysis=analysis
-            )
-            
-            # Handle case where no questions were generated
-            if not generated_questions:
-                self.logger.warning(f"No questions generated for chunk {chunk.id}")
-                return [], stats
-
-            stats["generated_questions"] = len(generated_questions)
-
-            # Update progress
-            if progress_reporter:
-                progress_reporter.update_progress(1, 2, {
-                    "stage": "question_validation",
-                    "generated": len(generated_questions)
-                })
-
-            # Validate questions - process in smaller batches to optimize memory
-            validation_results = {}
-            batch_size = 5  # Process 5 questions at a time
-
-            for i in range(0, len(generated_questions), batch_size):
-                batch = generated_questions[i:i+batch_size]
-                batch_results = await self.validation_engine.validate_questions(
-                    questions=batch,
-                    chunk=chunk
+            # === Step 1: Generate Questions ===
+            self.logger.debug(f"Starting question generation for chunk {chunk.id}")
+            try:
+                generated_questions = await self.question_generator.generate_questions(
+                    chunk=chunk,
+                    analysis=analysis
                 )
-                validation_results.update(batch_results)
+                chunk_stats["generated_questions"] = len(generated_questions)
+                self.logger.info(f"Generated {len(generated_questions)} questions for chunk {chunk.id}.")
+            except (ValidationError, LLMServiceError) as e:
+                self.logger.error(f"Question generation failed for chunk {chunk.id}: {e}")
+                chunk_stats["errors"].append(f"Generation Error: {str(e)}")
+                # Return empty list and stats indicating failure at this stage
+                return [], chunk_stats # Stop processing this chunk if generation fails critically
+            except Exception as e:
+                 self.logger.exception(f"Unexpected error during question generation for chunk {chunk.id}", exc_info=True)
+                 chunk_stats["errors"].append(f"Unexpected Generation Error: {str(e)}")
+                 return [], chunk_stats # Stop processing
 
-                # Allow garbage collection between batches
-                await asyncio.sleep(0)
+            # === Step 2: Validate Questions (if any were generated) ===
+            if generated_questions:
+                self.logger.debug(f"Starting validation for {len(generated_questions)} questions (Chunk {chunk.id}).")
+                validation_results: Dict[str, Dict[str, Any]] = {}
+                try:
+                    # Use the efficient batch validation method from ValidationEngine
+                    validation_results = await self.validation_engine.validate_questions(
+                        questions=generated_questions,
+                        chunk=chunk
+                    )
+                    chunk_stats["validated_questions"] = len(generated_questions) # Count how many went through validation
 
-            # Filter valid questions
-            valid_questions = self.validation_engine.get_valid_questions(
-                generated_questions,
-                validation_results
-            )
+                    # Filter valid questions based on the results
+                    # This helper method in ValidationEngine checks the aggregated 'is_valid' flag
+                    valid_questions = self.validation_engine.get_valid_questions(
+                        generated_questions,
+                        validation_results
+                    )
+                    chunk_stats["valid_questions_final"] = len(valid_questions)
+                    chunk_stats["rejected_questions"] = chunk_stats["generated_questions"] - chunk_stats["valid_questions_final"]
 
-            # Update statistics
-            stats["valid_questions"] = len(valid_questions)
-            stats["rejected_questions"] = len(generated_questions) - len(valid_questions)
+                    self.logger.info(
+                        f"Validation complete for chunk {chunk.id}: "
+                        f"{chunk_stats['valid_questions_final']} valid, "
+                        f"{chunk_stats['rejected_questions']} rejected."
+                    )
 
-            # Count by category
-            for question in valid_questions:
-                category = question.category
-                if category in stats["categories"]:
-                    stats["categories"][category] += 1
-                else:
-                    stats["categories"][category] = 1
+                except (ValidationError, LLMServiceError) as e:
+                    # Errors during the validation *process* (e.g., LLM call failure)
+                    self.logger.error(f"Question validation failed for chunk {chunk.id}: {e}")
+                    chunk_stats["errors"].append(f"Validation Error: {str(e)}")
+                    # Decide if we return the originally generated (but unvalidated) questions or none
+                    # Safer to return none if validation process fails.
+                    valid_questions = []
+                    chunk_stats["validated_questions"] = 0
+                    chunk_stats["valid_questions_final"] = 0
+                    chunk_stats["rejected_questions"] = chunk_stats["generated_questions"] # All rejected due to validation failure
+                except Exception as e:
+                     self.logger.exception(f"Unexpected error during question validation for chunk {chunk.id}", exc_info=True)
+                     chunk_stats["errors"].append(f"Unexpected Validation Error: {str(e)}")
+                     valid_questions = [] # Safer default
+                     chunk_stats["validated_questions"] = 0
+                     chunk_stats["valid_questions_final"] = 0
+                     chunk_stats["rejected_questions"] = chunk_stats["generated_questions"]
 
-            # Update progress
-            if progress_reporter:
-                progress_reporter.update_progress(2, 2, {
-                    "stage": "complete",
-                    "valid": len(valid_questions),
-                    "rejected": stats["rejected_questions"]
-                })
+            # === Step 3: Update Category Stats for Valid Questions ===
+            if valid_questions:
+                for question in valid_questions:
+                    category = question.category
+                    if category in chunk_stats["categories"]:
+                        chunk_stats["categories"][category] += 1
+                    else:
+                        # Log if unexpected category encountered
+                        self.logger.warning(f"Encountered unexpected question category '{category}' in chunk {chunk.id}. Adding to stats.")
+                        chunk_stats["categories"][category] = 1
 
-            self.logger.info(
-                f"Processed chunk {chunk.id}: "
-                f"generated={stats['generated_questions']}, "
-                f"valid={stats['valid_questions']}, "
-                f"rejected={stats['rejected_questions']}"
-            )
-
-            # Clear the chunk from cache if not needed anymore
-            if chunk.id in self._chunk_cache and len(self._chunk_cache) > 10:
-                del self._chunk_cache[chunk.id]
-
-            return valid_questions, stats
+            return valid_questions, chunk_stats
 
         except Exception as e:
-            raise ValidationError(f"Failed to process chunk {chunk.id}: {str(e)}")
-
-    
-    async def process_chunks(self, 
-                           chunks: List[Chunk],
-                           analyses: Dict[str, AnalysisResult],
-                           progress_reporter: Optional[ProgressReporter] = None) -> Tuple[Dict[str, List[Question]], Dict[str, Any]]:
-        """
-        Process multiple chunks with optimized memory usage.
-        """
-        all_questions: Dict[str, List[Question]] = {}
-        overall_stats = {
-            "total_chunks": len(chunks),
-            "total_generated_questions": 0,
-            "total_valid_questions": 0,
-            "total_rejected_questions": 0,
-            "categories": {
-                "factual": 0,
-                "inferential": 0,
-                "conceptual": 0
-            },
-            "chunk_stats": {}
-        }
-        
-        # Update progress
-        if progress_reporter:
-            progress_reporter.update_progress(0, len(chunks))
-        
-        # Process chunks sequentially to maintain validators context
-        for i, chunk in enumerate(chunks):
-            analysis = analyses.get(chunk.id)
-            if not analysis:
-                self.logger.warning(f"No analysis found for chunk {chunk.id}, skipping")
-                continue
-                
-            try:
-                questions, stats = await self.process_chunk(chunk, analysis, progress_reporter)
-                all_questions[chunk.id] = questions
-                
-                # Update overall statistics
-                overall_stats["total_generated_questions"] += stats["generated_questions"]
-                overall_stats["total_valid_questions"] += stats["valid_questions"]
-                overall_stats["total_rejected_questions"] += stats["rejected_questions"]
-                
-                for category, count in stats["categories"].items():
-                    overall_stats["categories"][category] = overall_stats["categories"].get(category, 0) + count
-                    
-                overall_stats["chunk_stats"][chunk.id] = stats
-                
-                # Update progress
-                if progress_reporter:
-                    progress_reporter.update_progress(i + 1, len(chunks), {
-                        "valid_questions": overall_stats["total_valid_questions"],
-                        "generated_questions": overall_stats["total_generated_questions"]
-                    })
-                
-                # Force garbage collection periodically to free memory
-                if i % 5 == 0:
-                    gc.collect()
-                    
-            except Exception as e:
-                self.logger.error(f"Failed to process chunk {chunk.id}: {str(e)}")
-        
-        # Final cleanup
-        self._chunk_cache.clear()
-        gc.collect()
-        
-        return all_questions, overall_stats
+            # Catch-all for any truly unexpected error within this method's orchestration
+            self.logger.exception(f"Critical unexpected error processing chunk {chunk.id}", exc_info=True)
+            chunk_stats["errors"].append(f"Critical Processor Error: {str(e)}")
+            return [], chunk_stats # Return empty results and error state

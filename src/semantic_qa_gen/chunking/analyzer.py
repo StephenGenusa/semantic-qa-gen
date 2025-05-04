@@ -1,209 +1,268 @@
+# filename: semantic_qa_gen/chunking/analyzer.py
 
-"""Semantic analyzer for document chunks."""
+"""Component for performing semantic analysis of document chunks using LLMs."""
 
 import logging
-import asyncio
-from typing import List, Dict, Any, Optional, Tuple
-import time
+import re
+from typing import Dict, Any, Optional
 
-from semantic_qa_gen.document.models import Chunk, AnalysisResult
-from semantic_qa_gen.llm.router import TaskRouter
+import yaml # Keep for fallback parsing if robust parser needs it
+import json # Added for JSON parsing
+
+from semantic_qa_gen.llm.router import TaskRouter, LLMTaskService
 from semantic_qa_gen.llm.prompts.manager import PromptManager
-from semantic_qa_gen.utils.error import ChunkingError, async_with_error_handling
-from semantic_qa_gen.utils.progress import ProgressReporter
-
+from semantic_qa_gen.document.models import AnalysisResult, Chunk
+from semantic_qa_gen.utils.error import AnalyzerError, LLMServiceError, ConfigurationError
 
 class SemanticAnalyzer:
     """
-    Analyzes document chunks for information density and question potential.
-    
-    This class is responsible for using LLMs to assess the content of chunks
-    and determine their suitability for question generation.
+    Analyzes document chunks for semantic properties using an LLM.
+
+    This component retrieves the appropriate LLM service via the TaskRouter,
+    formats a specific analysis prompt, calls the LLM, and parses the
+    structured response to create an AnalysisResult object.
     """
-    
-    def __init__(self, task_router: TaskRouter, prompt_manager: Optional[PromptManager] = None):
+
+    def __init__(self, task_router: TaskRouter, prompt_manager: PromptManager):
         """
-        Initialize the semantic analyzer.
-        
+        Initialize the SemanticAnalyzer.
+
         Args:
-            task_router: Task router for LLM services.
-            prompt_manager: Optional prompt manager.
+            task_router: The router to get appropriate LLM services.
+            prompt_manager: The manager for retrieving prompt templates.
         """
         self.task_router = task_router
-        self.prompt_manager = prompt_manager or PromptManager()
+        # PromptManager is needed to format the prompt template correctly here.
+        self.prompt_manager = prompt_manager
         self.logger = logging.getLogger(__name__)
-        
-        # Cache for analysis results to avoid reprocessing
-        self.analysis_cache: Dict[str, Tuple[AnalysisResult, float]] = {}
-        self.cache_ttl = 3600  # Cache results for 1 hour
-    
-    @async_with_error_handling(error_types=Exception, max_retries=2)
+
+        # Verify existence of the required prompt template during initialization
+        try:
+            self.prompt_manager.get_prompt("chunk_analysis")
+            self.logger.debug("Chunk analysis prompt verified.")
+        except Exception as e:
+            # If the essential prompt is missing, analyzer cannot function.
+            raise ConfigurationError(f"SemanticAnalyzer init failed: Required prompt 'chunk_analysis' not found. Details: {e}")
+
+
     async def analyze_chunk(self, chunk: Chunk) -> AnalysisResult:
         """
-        Analyze a single document chunk.
-        
+        Perform semantic analysis on a single chunk using an LLM via TaskRouter.
+
         Args:
-            chunk: Document chunk to analyze.
-            
+            chunk: The Chunk object to analyze.
+
         Returns:
-            Analysis result for the chunk.
-            
+            An AnalysisResult object containing the analysis metrics.
+
         Raises:
-            ChunkingError: If analysis fails.
+            AnalyzerError: If the analysis fails due to LLM errors, prompt issues,
+                           parsing errors, or configuration issues.
         """
-        # Check cache first
-        if chunk.id in self.analysis_cache:
-            result, timestamp = self.analysis_cache[chunk.id]
-            if time.time() - timestamp < self.cache_ttl:
-                self.logger.debug(f"Using cached analysis for chunk {chunk.id}")
-                return result
-        
+        self.logger.debug(f"Requesting analysis for chunk {chunk.id} (sequence {chunk.sequence})...")
         try:
-            # Get the LLM service for analysis
-            result = await self.task_router.analyze_chunk(chunk)
-            
-            self.logger.info(
-                f"Analyzed chunk {chunk.id}: "
-                f"density={result.information_density:.2f}, "
-                f"coherence={result.topic_coherence:.2f}, "
-                f"complexity={result.complexity:.2f}, "
-                f"yield={sum(result.estimated_question_yield.values())} questions"
-            )
-            
-            # Cache the result
-            self.analysis_cache[chunk.id] = (result, time.time())
-            
-            return result
-            
-        except Exception as e:
-            raise ChunkingError(f"Failed to analyze chunk {chunk.id}: {str(e)}")
-    
-    async def analyze_chunks(self, chunks: List[Chunk], 
-                          progress_reporter: Optional[ProgressReporter] = None) -> Dict[str, AnalysisResult]:
-        """
-        Analyze multiple document chunks with optimized concurrency.
-        
-        Args:
-            chunks: List of document chunks to analyze.
-            progress_reporter: Optional progress reporter.
-            
-        Returns:
-            Dictionary mapping chunk IDs to analysis results.
-            
-        Raises:
-            ChunkingError: If analysis fails.
-        """
-        results = {}
-        
-        # Set up progress reporting
-        if progress_reporter:
-            progress_reporter.update_progress(0, len(chunks))
-        
-        # Process chunks in efficient batches
-        concurrency = min(3, len(chunks))  # Limit concurrency to avoid overwhelming LLM APIs
-        semaphore = asyncio.Semaphore(concurrency)
-        
-        async def process_with_semaphore(chunk):
-            async with semaphore:
-                return await self.analyze_chunk(chunk)
-        
-        # Create tasks for all chunks
-        tasks = []
-        for chunk in chunks:
-            task = asyncio.create_task(process_with_semaphore(chunk))
-            tasks.append((chunk.id, task))
-        
-        # Process results as they complete
-        for i, (chunk_id, task) in enumerate(tasks):
+            # 1. Get the appropriate LLM task handler for "analysis"
+            llm_task_service: LLMTaskService = self.task_router.get_task_handler("analysis")
+
+            self.logger.debug(f"Using adapter {type(llm_task_service.adapter).__name__} "
+                             f"with model config {llm_task_service.model_config.name} for analysis.")
+
+            # 2. Get and format the analysis prompt
             try:
-                result = await task
-                results[chunk_id] = result
-                
-                # Update progress
-                if progress_reporter:
-                    progress_reporter.update_progress(i + 1, len(chunks), {
-                        "analyzed": i + 1,
-                        "avg_density": self._calculate_avg_density(results)
-                    })
-                    
-            except Exception as e:
-                self.logger.error(f"Failed to analyze chunk {chunk_id}: {str(e)}")
-                
-                # Create a fallback result with neutral values
-                results[chunk_id] = AnalysisResult(
-                    chunk_id=chunk_id,
-                    information_density=0.5,
-                    topic_coherence=0.5,
-                    complexity=0.5,
-                    estimated_question_yield={
-                        "factual": 3,
-                        "inferential": 2,
-                        "conceptual": 1
-                    },
-                    key_concepts=[],
-                    notes="Analysis failed, using default values"
-                )
-        
-        return results
-    
-    def _calculate_avg_density(self, results: Dict[str, AnalysisResult]) -> float:
-        """Calculate the average information density from current results."""
-        if not results:
-            return 0.0
-        return sum(result.information_density for result in results.values()) / len(results)
-    
-    def estimate_question_yield(self, chunks: List[Chunk], 
-                              analyses: Dict[str, AnalysisResult]) -> Dict[str, Any]:
+                analysis_prompt_template = self.prompt_manager.get_prompt("chunk_analysis")
+                prompt_vars = {"chunk_content": chunk.content}
+                formatted_prompt = analysis_prompt_template.format(**prompt_vars)
+                # Check if prompt/adapter expects JSON mode
+                expects_json = self.prompt_manager.is_json_output("chunk_analysis")
+                # TODO: Pass `expects_json` hint to `generate_completion` if the adapter implements it
+            except KeyError as e:
+                 self.logger.error(f"Missing variable '{e}' for chunk_analysis prompt template.")
+                 raise AnalyzerError(f"Prompt formatting error: Missing variable '{e}'")
+            except LLMServiceError as e: # Catch prompt not found from get_prompt
+                 raise AnalyzerError(f"Analysis failed: {e}") from e
+
+            # 3. Call the LLM via the adapter's core completion method
+            response_text = await llm_task_service.adapter.generate_completion(
+                prompt=formatted_prompt,
+                model_config=llm_task_service.model_config # Pass specific model config for this task
+            )
+
+            if not response_text:
+                 self.logger.warning(f"LLM returned empty response during analysis for chunk {chunk.id}.")
+                 # Return default/fallback AnalysisResult on empty response
+                 return self._create_default_analysis_result(chunk.id, "LLM returned empty response")
+
+
+            # 4. Parse the structured response (YAML or JSON)
+            # Moved parsing logic here from adapter base
+            analysis_data = self._parse_analysis_response(response_text, chunk.id)
+
+            # 5. Create and return the AnalysisResult object
+            return AnalysisResult(
+                chunk_id=chunk.id,
+                information_density=analysis_data.get('information_density', 0.5),
+                topic_coherence=analysis_data.get('topic_coherence', 0.5),
+                complexity=analysis_data.get('complexity', 0.5),
+                estimated_question_yield=analysis_data.get('estimated_question_yield', {"factual": 1, "inferential": 0, "conceptual": 0}),
+                key_concepts=analysis_data.get('key_concepts', []),
+                notes=analysis_data.get('notes')
+            )
+
+        except LLMServiceError as e:
+            self.logger.error(f"LLM service error during analysis for chunk {chunk.id}: {e}")
+            # Depending on config, could return default or raise
+            # Raise AnalyzerError to let pipeline decide on retry/skip
+            raise AnalyzerError(f"LLM service failed during chunk analysis: {str(e)}") from e
+        except AnalyzerError as e: # Catch formatting/parsing errors raised internally
+             self.logger.error(f"Analyzer error processing chunk {chunk.id}: {e}")
+             raise # Re-raise specific AnalyzerErrors
+        except ConfigurationError as e:
+             self.logger.error(f"Configuration error preventing analysis for chunk {chunk.id}: {e}")
+             raise # Re-raise config errors immediately
+        except Exception as e:
+            self.logger.exception(f"Unexpected error analyzing chunk {chunk.id}: {e}", exc_info=True)
+            raise AnalyzerError(f"An unexpected error occurred during chunk analysis: {str(e)}") from e
+
+
+    def _parse_analysis_response(self, response_text: str, chunk_id: str) -> Dict[str, Any]:
         """
-        Estimate the total question yield for a set of chunks.
-        
+        Parse the LLM's analysis response (YAML or JSON), attempting recovery.
+
         Args:
-            chunks: List of document chunks.
-            analyses: Analysis results for the chunks.
-            
+            response_text: The raw string response from the LLM.
+            chunk_id: The ID of the chunk analyzed (for logging).
+
         Returns:
-            Statistics about estimated question yield.
+            A dictionary containing parsed analysis data with defaults for errors/missing fields.
+
+        Raises:
+            AnalyzerError: If parsing fails definitively after attempting recovery.
         """
-        total_yield = {
-            "factual": 0,
-            "inferential": 0,
-            "conceptual": 0
-        }
-        
-        for chunk in chunks:
-            analysis = analyses.get(chunk.id)
-            if analysis:
-                for category, count in analysis.estimated_question_yield.items():
-                    if category in total_yield:
-                        total_yield[category] += count
-        
-        total_yield["total"] = sum(total_yield.values())
-        
-        # Calculate averages for better insight
-        avg_values = {}
-        if analyses:
-            avg_values = {
-                "avg_information_density": sum(a.information_density for a in analyses.values()) / len(analyses),
-                "avg_topic_coherence": sum(a.topic_coherence for a in analyses.values()) / len(analyses),
-                "avg_complexity": sum(a.complexity for a in analyses.values()) / len(analyses),
-                "std_dev_density": self._calculate_std_dev([a.information_density for a in analyses.values()])
-            }
-        
-        return {
-            "estimated_questions": total_yield,
-            "chunks_analyzed": len(analyses),
-            **avg_values
-        }
+        parsed_data: Optional[Dict[str, Any]] = None
+        response_text = response_text.strip()
+        source = "unknown"
 
-    def _calculate_std_dev(self, values: List[float]) -> float:
-        """Calculate standard deviation."""
-        if not values:
-            return 0.0
-        mean = sum(values) / len(values)
-        variance = sum((x - mean) ** 2 for x in values) / len(values)
-        return (variance ** 0.5)
+        # Attempt 1: Try parsing as JSON first
+        try:
+            # Check if it looks like a JSON object/array first
+            if response_text.startswith('{') or response_text.startswith('['):
+                parsed_data = json.loads(response_text)
+                source = "direct JSON parse"
+        except json.JSONDecodeError:
+            self.logger.debug(f"Direct JSON parse failed for chunk {chunk_id}. Trying YAML.")
+            pass # Fall through to YAML
 
-    def clear_cache(self) -> None:
-        """Clear the analysis cache."""
-        self.analysis_cache.clear()
-        self.logger.debug("Analysis cache cleared")
+        # Attempt 2: Try parsing as YAML if JSON failed or wasn't attempted
+        if parsed_data is None:
+            try:
+                parsed_data = yaml.safe_load(response_text)
+                # Check if YAML parsing resulted in a primitive type instead of dict
+                if not isinstance(parsed_data, dict):
+                     self.logger.warning(f"YAML parse for chunk {chunk_id} did not yield a dictionary (got {type(parsed_data)}). Treating as parse failure.")
+                     parsed_data = None # Reset parsed_data to trigger code block extraction
+                else:
+                     source = "direct YAML parse"
+            except yaml.YAMLError as yaml_err:
+                self.logger.warning(f"Direct YAML parse failed for chunk {chunk_id}: {yaml_err}. Trying code block extraction.")
+                pass # Fall through to code block extraction
+
+        # Attempt 3: Extract from Markdown code blocks if direct parsing failed
+        if parsed_data is None:
+             code_block_json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response_text, re.DOTALL | re.IGNORECASE)
+             code_block_yaml_match = re.search(r"```(?:yaml|yml)?\s*\n(.*?)\n```", response_text, re.DOTALL | re.IGNORECASE)
+
+             if code_block_json_match:
+                 try:
+                     parsed_data = json.loads(code_block_json_match.group(1))
+                     source = "extracted JSON code block"
+                     self.logger.info(f"Successfully parsed analysis from extracted JSON block for chunk {chunk_id}.")
+                 except json.JSONDecodeError as e:
+                     self.logger.error(f"Failed to parse extracted JSON block for analysis (Chunk {chunk_id}): {e}")
+                     parsed_data = None # Indicate failure
+             elif code_block_yaml_match:
+                 try:
+                     parsed_data = yaml.safe_load(code_block_yaml_match.group(1).strip())
+                     if not isinstance(parsed_data, dict): # Verify type again
+                          parsed_data = None
+                     else:
+                          source = "extracted YAML code block"
+                          self.logger.info(f"Successfully parsed analysis from extracted YAML block for chunk {chunk_id}.")
+                 except yaml.YAMLError as e:
+                     self.logger.error(f"Failed to parse extracted YAML block for analysis (Chunk {chunk_id}): {e}")
+                     parsed_data = None # Indicate failure
+
+        # Final check and raise if still failed
+        if parsed_data is None or not isinstance(parsed_data, dict):
+            self.logger.error(f"Failed to parse analysis response structure for chunk {chunk_id} after all attempts.")
+            raise AnalyzerError(f"Could not parse LLM analysis response for chunk {chunk_id}.", details={"response": response_text[:500]}) # Include snippet of response
+
+        # --- Data Validation & Normalization with Defaults ---
+        final_data: Dict[str, Any] = {}
+        # Scores (float, 0.0-1.0, default 0.5)
+        for key in ['information_density', 'topic_coherence', 'complexity']:
+            value = parsed_data.get(key, 0.5)
+            try:
+                value_f = float(value)
+                final_data[key] = max(0.0, min(1.0, value_f))
+                if not (0.0 <= value_f <= 1.0):
+                     self.logger.warning(f"analysis:{source}: Metric '{key}' value ({value_f}) for chunk {chunk_id} outside [0, 1]. Clamped.")
+            except (ValueError, TypeError):
+                 self.logger.warning(f"analysis:{source}: Could not parse metric '{key}' ('{value}') as float for chunk {chunk_id}. Defaulting to 0.5.")
+                 final_data[key] = 0.5
+
+        # Estimated Yield (dict[str, int], default 0)
+        yield_dict = parsed_data.get('estimated_question_yield', {})
+        final_yield: Dict[str, int] = {}
+        # Ensure default categories exist
+        default_categories = ["factual", "inferential", "conceptual"]
+        for cat in default_categories:
+            final_yield[cat] = 0
+
+        if isinstance(yield_dict, dict):
+            for cat, count in yield_dict.items():
+                 cat_lower = str(cat).lower()
+                 # Only take expected categories or warn? Let's be flexible but clean keys.
+                 valid_key = next((c for c in default_categories if c == cat_lower), None)
+                 if not valid_key:
+                     self.logger.debug(f"analysis:{source}: Ignoring unexpected yield category '{cat}' for chunk {chunk_id}.")
+                     continue
+                 try:
+                    final_yield[valid_key] = max(0, int(count))
+                 except (ValueError, TypeError):
+                    self.logger.warning(f"analysis:{source}: Could not parse yield '{cat}' ('{count}') as int for chunk {chunk_id}. Defaulting to 0.")
+                    # Keep the default 0 set above
+        else:
+             self.logger.warning(f"analysis:{source}: 'estimated_question_yield' for chunk {chunk_id} not a dict. Using defaults.")
+        final_data['estimated_question_yield'] = final_yield
+
+        # Key Concepts (list[str], default [])
+        concepts = parsed_data.get('key_concepts', [])
+        if isinstance(concepts, list):
+            final_concepts = [str(item).strip() for item in concepts if isinstance(item, (str, int, float)) and str(item).strip()]
+            if len(final_concepts) != len(concepts): # Indicates some items were skipped/cleaned
+                 self.logger.debug(f"analysis:{source}: Cleaned 'key_concepts' list for chunk {chunk_id}.")
+            final_data['key_concepts'] = final_concepts
+        else:
+             self.logger.warning(f"analysis:{source}: 'key_concepts' for chunk {chunk_id} not a list. Using empty.")
+             final_data['key_concepts'] = []
+
+        # Notes (str, optional)
+        notes_val = parsed_data.get('notes')
+        final_data['notes'] = str(notes_val).strip() if notes_val else None # Store None if empty/None
+
+        self.logger.debug(f"Parsed analysis data for chunk {chunk_id} via {source}: {final_data}")
+        return final_data
+
+    def _create_default_analysis_result(self, chunk_id: str, notes: str = "Analysis failed") -> AnalysisResult:
+        """Creates a fallback AnalysisResult when processing fails."""
+        self.logger.warning(f"Creating default/fallback analysis result for chunk {chunk_id}. Reason: {notes}")
+        return AnalysisResult(
+            chunk_id=chunk_id,
+            information_density=0.5,
+            topic_coherence=0.5,
+            complexity=0.5,
+            estimated_question_yield={"factual": 1, "inferential": 0, "conceptual": 0}, # Minimum default yield
+            key_concepts=[],
+            notes=notes
+        )
+

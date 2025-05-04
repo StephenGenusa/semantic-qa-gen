@@ -1,96 +1,102 @@
-"""Base validator interface for question validation."""
+# filename: semantic_qa_gen/question/validation/base.py
+
+"""Base validator interface and ValidationResult model."""
 
 from abc import ABC, abstractmethod
 import logging
 from typing import Dict, Any, Optional, List
 
-from semantic_qa_gen.document.models import Question, Chunk
-from semantic_qa_gen.utils.error import ValidationError
+# Use Pydantic V2 imports
+from pydantic import BaseModel, Field
 
+from semantic_qa_gen.document.models import Question, Chunk # Keep these dependencies
+from semantic_qa_gen.utils.error import ValidationError # Keep custom error
 
-class ValidationResult:
-    """
-    Results of validating a question-answer pair.
-    
-    This class stores the validation outcome and metrics for a single question.
-    """
-    
-    def __init__(self, 
-                question_id: str, 
-                is_valid: bool,
-                scores: Dict[str, float],
-                reasons: Optional[List[str]] = None,
-                suggested_improvements: Optional[str] = None):
-        """
-        Initialize validation result.
-        
-        Args:
-            question_id: ID of the validated question.
-            is_valid: Whether the question-answer pair is valid.
-            scores: Dictionary of validation scores by category.
-            reasons: Optional list of reasons for validation result.
-            suggested_improvements: Optional suggestions for improvement.
-        """
-        self.question_id = question_id
-        self.is_valid = is_valid
-        self.scores = scores
-        self.reasons = reasons or []
-        self.suggested_improvements = suggested_improvements
-        
-    def __bool__(self):
-        """Convert validation result to boolean."""
+# --- Pydantic V2 ValidationResult Model ---
+class ValidationResult(BaseModel):
+    """Stores the outcome of validating a single Question by a specific validator."""
+    question_id: str = Field(..., description="ID of the question being validated.")
+    validator_name: Optional[str] = Field(None, description="Name of the validator producing this result.")
+    is_valid: bool = Field(..., description="Validity outcome from this specific validator.")
+    # Score(s) produced by this specific validator
+    scores: Dict[str, float] = Field(default_factory=dict, description="Dictionary of scores from this validator (e.g., {'factual_accuracy': 0.9}).")
+    # Reason(s) provided by this specific validator
+    reasons: List[str] = Field(default_factory=list, description="List of reasons supporting the validity decision (especially for failure).")
+    # Optional suggestions from this specific validator
+    suggested_improvements: Optional[str] = Field(None, description="Optional textual suggestions for improving the question/answer from this validator.")
+
+    model_config = { # Replaces Config class
+        "validate_assignment": True
+    }
+
+    def __bool__(self) -> bool:
+        """Allows treating the result directly as a boolean (True if valid)."""
         return self.is_valid
-        
-    def __str__(self):
-        """String representation of validation result."""
+
+    def __str__(self) -> str:
+        """Provides a concise string representation."""
         status = "Valid" if self.is_valid else "Invalid"
-        reasons = f": {', '.join(self.reasons)}" if self.reasons else ""
-        return f"{status} (Q:{self.question_id}){reasons}"
+        score_str = ", ".join(f"{k}={v:.2f}" for k, v in self.scores.items()) if self.scores else "N/A"
+        # Include validator name for clarity
+        name_prefix = f"({self.validator_name}) " if self.validator_name else ""
+        reason_str = f": {'; '.join(self.reasons)}" if self.reasons else ""
+        return f"Q:{self.question_id} {name_prefix}-> {status} (Scores: [{score_str}]{reason_str})"
 
 
+# --- Base Validator Abstract Class ---
 class BaseValidator(ABC):
     """
-    Abstract base class for question validators.
-    
-    Validators check question-answer pairs against specific criteria
-    and return validation results.
+    Abstract base class for question validators using Pydantic V2.
+
+    Validators check question-answer pairs against specific criteria.
+    LLM-based validators may receive pre-computed data obtained from a
+    single LLM call managed by the ValidationEngine.
     """
-    
+
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the validator.
-        
+
         Args:
-            config: Optional configuration dictionary.
+            config: Optional configuration dictionary (from the specific validator's
+                    section in the main config, e.g., validation.factual_accuracy).
         """
+        # Use Pydantic V2 BaseValidatorConfig or specific child for validation?
+        # Simpler: pass dict and let validator use it.
         self.config = config or {}
-        self.threshold = self.config.get('threshold', 0.6)
+        self.threshold = self.config.get('threshold', 0.6) # Default threshold
         self.enabled = self.config.get('enabled', True)
         self.name = self.__class__.__name__
-        self.logger = logging.getLogger(__name__)
-    
+        self.logger = logging.getLogger(f"{__name__}.{self.name}")
+
+        if not self.enabled:
+            self.logger.debug(f"Validator '{self.name}' is disabled via configuration.")
+
     @abstractmethod
-    async def validate(self, question: Question, chunk: Chunk) -> ValidationResult:
+    async def validate(self,
+                       question: Question,
+                       chunk: Chunk,
+                       llm_validation_data: Optional[Dict[str, Any]] = None) -> ValidationResult:
         """
-        Validate a question-answer pair against the source chunk.
-        
+        Validate a question-answer pair against specific criteria.
+
         Args:
-            question: The question to validate.
-            chunk: The source chunk.
-            
+            question: The Question object to validate.
+            chunk: The source Chunk context.
+            llm_validation_data: Optional dictionary containing pre-fetched results
+                                 from a shared LLM validation call (used only by
+                                 validators marked as requiring LLM in ValidationEngine).
+
         Returns:
-            ValidationResult object.
-            
+            A ValidationResult object detailing the outcome of this specific validator.
+
         Raises:
-            ValidationError: If validation fails.
+            ValidationError: If the validation logic itself encounters an unrecoverable error.
+                             Should NOT raise for simply failing validation (return is_valid=False).
         """
         pass
-    
+
     def is_enabled(self) -> bool:
-        """
-        Check if this validator is enabled.
-        
-        Returns:
-            True if the validator is enabled, False otherwise.
-        """
+        """Check if this validator is enabled via configuration."""
         return self.enabled
+

@@ -1,0 +1,317 @@
+# Military training question generation templates.
+
+procedural_questions:
+  template: |
+    Generate {num_questions} high-quality procedural questions based on the following military training manual content.
+    
+    Training manual content:
+    ---
+    {chunk_content}
+    ---
+    
+    Analysis:
+    {analysis}
+    
+    Key training points: {key_concepts}
+    
+    Create questions that:
+    - Focus on specific procedures, sequences of actions, or methodologies
+    - Test understanding of proper execution of military tasks and drills
+    - Include precise, doctrinally correct steps in the answers
+    - Address critical details that impact mission success or safety
+    - Cover various procedural aspects from basic to advanced
+    
+    Format each Q&A pair EXACTLY as shown in these examples:
+
+    ```
+    Q: What is the correct sequence for executing the 5-point contingency plan prior to a patrol leader's departure?
+    A: The correct sequence for executing the 5-point contingency plan (GOTWA) is:
+    1. Going: Where the patrol leader is going
+    2. Others: Who is going with the patrol leader
+    3. Time: Time the patrol leader will be gone
+    4. What: What to do if the patrol leader fails to return
+    5. Actions: Actions to take if the patrol leader and team make enemy contact
+    
+    Each element must be clearly communicated to the senior person remaining with the main element. According to the manual, this information must be memorized by all members of the leadership element in case the patrol leader becomes a casualty.
+    
+    Q: What are the proper procedures for clearing a stoppage on the M240B machine gun during immediate action?
+    A: The proper procedures for clearing a stoppage on the M240B machine gun during immediate action are:
+    
+    1. Identify the stoppage by observing the position of the bolt.
+    2. Pull the charging handle to the rear while observing for ejection of a cartridge or case.
+    3. Push the charging handle all the way forward.
+    4. Ensure the feed tray cover is closed.
+    5. Attempt to fire.
+    
+    If this immediate action fails to resolve the stoppage:
+    1. Lock the bolt to the rear.
+    2. Place weapon on SAFE.
+    3. Open the feed tray cover.
+    4. Remove the belt of ammunition.
+    5. Inspect the chamber and clear any obstructions.
+    6. Reload, close feed tray cover, and attempt to fire.
+    
+    The manual emphasizes that immediate action must be applied within 10 seconds to maintain combat effectiveness.
+    ```
+    
+    Return ONLY the specified number of questions and answers in the exact format shown, without numbering, additional commentary, or explanations. Ensure each question focuses on different procedures from the training content.
+  description: "Generates procedural questions from military training manuals"
+  json_output: false
+  system_prompt: "You are a senior military instructor with extensive field experience. You specialize in creating precise procedural questions that test proper execution of military tasks according to established doctrine and tactical standard operating procedures."
+  model_preference: "gpt-4"
+  temperature: 0.7
+
+tactical_decision_questions:
+  template: |
+    Generate {num_questions} high-quality tactical decision-making questions based on the following military training manual content.
+    
+    Training manual content:
+    ---
+    {chunk_content}
+    ---
+    
+    Analysis:
+    {analysis}
+    
+    Create questions that:
+    - Present realistic tactical scenarios requiring decision-making
+    - Test application of tactical principles from the manual
+    - Require evaluating multiple courses of action
+    - Include consideration of terrain, enemy, troops, time, and civilian factors
+    - Assess understanding of command priorities and mission objectives
+    
+    Format each Q&A pair EXACTLY as shown in these examples:
+
+    ```
+    Q: Your infantry squad is conducting a movement to contact through dense urban terrain when you receive reports of enemy personnel setting up a machine gun position in a building 300 meters to your front. You also observe civilian activity in the area. Based on the manual's guidance on urban operations, what is your most appropriate course of action?
+    A: According to the manual's guidance on urban operations, the most appropriate course of action would be:
+    
+    1. Immediately establish a support-by-fire position utilizing buildings for cover, positioning at least one team where they can observe and suppress the enemy position.
+    
+    2. Report the situation to higher headquarters using the SALUTE format (Size, Activity, Location, Unit, Time, Equipment).
+    
+    3. Conduct a hasty terrain analysis using the OCOKA factors to identify:
+       - Covered and concealed approach routes
+       - Buildings that provide dominant observation of the enemy position
+       - Avenues to flank the enemy position
+    
+    4. Implement civilian control measures by:
+       - Using vehicle mounted loudspeakers or interpreter to clear civilians from the area
+       - Designating a civilian collection point away from the expected field of fire
+       - Assigning one team member to manage civilian movement
+    
+    5. Execute a flanking maneuver with the remaining fire team while the support team suppresses the enemy position.
+    
+    The manual specifically emphasizes maintaining fire superiority while maneuvering in urban terrain (p. 3-15) and states that frontal assaults against prepared positions should be avoided unless absolutely necessary. It also prioritizes civilian protection while accomplishing the mission.
+    
+    Q: While serving as a platoon leader during a stability operation, you receive intelligence that a high-value target is located in a village within your area of operations. Your company commander orders you to establish an observation post overlooking the village. Based on the manual's section on stability operations, what key factors should guide your placement and operation of this observation post?
+    A: According to the manual's guidance on stability operations, the key factors that should guide the placement and operation of the observation post are:
+    
+    1. Observation and fields of fire:
+       - Position must provide maximum observation of the target area (village)
+       - Must enable observation of primary avenues of approach to/from the village
+       - Should have interlocking fields of observation with adjacent security elements
+    
+    2. Security considerations:
+       - Establish the OP in a location that provides multiple covered withdrawal routes
+       - Minimum distance of 300-500 meters from the observed area (as specified in the manual)
+       - Position should not be obvious or predictable based on terrain
+       - Implement proper noise and light discipline procedures
+    
+    3. Operational security:
+       - Use covered approach routes during occupation
+       - Establish the OP during limited visibility if possible
+       - Maintain communication security using proper radio procedures
+       - Rotate personnel at irregular intervals to prevent pattern setting
+    
+    4. Rules of Engagement (ROE) and legal considerations:
+       - Ensure all personnel understand current ROE for observation operations
+       - Brief specific guidance on civilian interaction and evidence collection
+       - Implement proper documentation procedures for all observed activities
+    
+    5. Logistics sustainability:
+       - Ensure sufficient supply for 48-72 hour operation without resupply (per manual)
+       - Establish emergency resupply and CASEVAC procedures
+       - Plan for proper waste management to prevent compromise
+    
+    The manual emphasizes that in stability operations, observation posts serve both security and intelligence collection functions, and their effectiveness depends on balancing visibility of the area with the security of the observing force.
+    ```
+    
+    Return ONLY the specified number of questions and answers in the exact format shown, without numbering, additional commentary, or explanations. Ensure each question presents different tactical decision scenarios related to the manual content.
+  description: "Generates tactical decision-making questions from military training manuals"
+  json_output: false
+  system_prompt: "You are a senior military tactics instructor with combat experience across multiple deployments. You excel at creating realistic tactical decision-making scenarios that test application of doctrinal principles, tactical judgment, and leadership decision-making under pressure."
+  temperature: 0.7
+
+equipment_knowledge_questions:
+  template: |
+    Generate {num_questions} high-quality equipment knowledge questions based on the following military training manual content.
+    
+    Training manual content:
+    ---
+    {chunk_content}
+    ---
+    
+    Analysis:
+    {analysis}
+    
+    Create questions that:
+    - Focus on military equipment specifications, capabilities, and limitations
+    - Test knowledge of proper operation, maintenance, and troubleshooting
+    - Include technical details important for operational effectiveness
+    - Address safety considerations and critical warnings
+    - Cover various aspects of equipment knowledge from the manual
+    
+    Format each Q&A pair EXACTLY as shown in these examples:
+
+    ```
+    Q: What are the maximum effective ranges of the M4 carbine for point and area targets, and what factors in the manual are identified as affecting these ranges?
+    A: According to the manual, the maximum effective range of the M4 carbine is 500 meters for point targets and 600 meters for area targets.
+    
+    The manual identifies the following factors as affecting these maximum effective ranges:
+    
+    1. Environmental conditions: Weather (particularly wind), light conditions, and precipitation can significantly impact effective range.
+    
+    2. Ammunition type: M855A1 Enhanced Performance Round provides different ballistic performance than standard M855 ammunition, maintaining better terminal ballistics at the maximum effective range.
+    
+    3. Barrel length: The M4's 14.5-inch barrel provides different ballistic performance than the longer M16 barrel, affecting maximum effective range.
+    
+    4. Optics employed: The manual specifies that with Advanced Combat Optical Gunsight (ACOG), effective engagement ranges can be consistently achieved at the maximum stated ranges, while iron sights may reduce effective range based on operator proficiency.
+    
+    5. Firing position: Supported firing positions (prone supported, supported kneeling) allow engagement at maximum effective ranges, while unsupported positions may reduce effective engagement ranges.
+    
+    The manual emphasizes that operators should train at varying distances to understand their personal effective engagement ranges with assigned equipment.
+    
+    Q: What preventive maintenance checks and services (PMCS) must be performed on the AN/PVS-14 night vision device before and after operation according to the training manual?
+    A: According to the training manual, the required PMCS for the AN/PVS-14 night vision device include:
+    
+    Before Operation:
+    1. Inspect the device for completeness and any damage to the housing, lenses, eyecup, or battery compartment.
+    2. Verify proper battery installation with polarity aligned with markings (AA lithium or alkaline).
+    3. Check battery life using the built-in battery indicator function (press button while turning on).
+    4. Ensure the objective lens focus ring and diopter adjustment ring move freely.
+    5. Confirm the IR illuminator functions properly when activated (manual notes this should only be checked in authorized environments).
+    6. Verify the device powers on and produces a clear, properly focused image.
+    7. Check helmet mount or head mount (if used) for secure attachment points and stability.
+    
+    After Operation:
+    1. Clean all external surfaces with lens tissue and approved cleaning solution only (manual specifically prohibits using solvents or alcohol-based cleaners).
+    2. Remove batteries if storing for more than 30 days.
+    3. Inspect for moisture or debris and clean as necessary.
+    4. Verify objective lens cap and eyepiece cover are secured in place.
+    5. Complete equipment serviceability record in equipment logbook.
+    6. Store in provided carrying case with desiccant packet.
+    
+    The manual emphasizes that failure to perform these PMCS procedures may result in equipment failure during critical operations and creates a serious safety risk for the operator.
+    ```
+    
+    Return ONLY the specified number of questions and answers in the exact format shown, without numbering, additional commentary, or explanations. Ensure each question focuses on different equipment knowledge aspects from the manual content.
+  description: "Generates equipment knowledge questions from military training manuals"
+  json_output: false
+  system_prompt: "You are a senior military equipment specialist with extensive experience in weapons systems, communication equipment, and tactical gear. You excel at creating technically precise questions about military equipment operation, maintenance, and capabilities according to official technical manuals and field manuals."
+  temperature: 0.7
+
+battle_drill_questions:
+  template: |
+    Generate {num_questions} high-quality battle drill and immediate action questions based on the following military training manual content.
+    
+    Training manual content:
+    ---
+    {chunk_content}
+    ---
+    
+    Analysis:
+    {analysis}
+    
+    Create questions that:
+    - Focus on standard battle drills, immediate actions, and tactical standard operating procedures
+    - Test knowledge of proper execution sequence, individual responsibilities, and team coordination
+    - Include specific commands, signals, and control measures
+    - Address critical actions that ensure mission success and force protection
+    - Cover the essential elements of battle drills from the manual
+    
+    Format each Q&A pair EXACTLY as shown in these examples:
+
+    ```
+    Q: According to the manual, what are the step-by-step actions in the correct sequence for executing "Battle Drill 2: React to Contact" at the squad level?
+    A: According to the manual, the step-by-step actions for executing "Battle Drill 2: React to Contact" at the squad level are:
+    
+    1. The soldier who makes contact immediately returns fire and takes cover. The soldier shouts "CONTACT [DIRECTION]" and gives a target reference using the clock method.
+    
+    2. Squad members in contact immediately return well-aimed fire on known or suspected enemy positions and take cover. They continue to fire and report known or suspected enemy positions to the squad leader.
+    
+    3. Squad leader gives the command "FIRE TEAM ___ ASSAULT/SUPPORT" and reports contact to the platoon leader.
+    
+    4. The designated fire team leader directs their team using specific fire commands:
+       - Direction (hand and arm signals or compass direction)
+       - Distance (range to target)
+       - Description (type of target)
+       - Distribution (what each soldier engages)
+       - Fire control (when to commence firing)
+    
+    5. The assaulting fire team executes fire and movement:
+       - Fire team leader designates a base of fire
+       - Remaining members of the fire team establish a base of fire
+       - Fire team leader determines if they can maneuver
+       - Fire team assaults using 3-5 second bounds
+       - Soldiers maintain 5-meter distance between each other
+    
+    6. The supporting fire team shifts fires as assault team advances.
+    
+    7. Squad leader controls the movement of the assaulting fire team.
+    
+    8. Upon seizure of objective, squad leader:
+       - Consolidates and reorganizes
+       - Accounts for personnel and equipment
+       - Ensures security is maintained
+       - Reports situation to platoon leader
+    
+    The manual emphasizes that this battle drill must be executed in under 45 seconds from initial contact, and all movements must be covered by effective suppressive fire.
+    
+    Q: What is the correct procedure for reacting to an ambush (near) according to the training manual, and how do the actions differ based on whether the unit is within or outside hand grenade range?
+    A: According to the training manual, the correct procedure for reacting to an ambush (near) is:
+    
+    WITHIN HAND GRENADE RANGE (50 meters or less):
+    
+    1. Soldiers in the kill zone immediately return fire, shout "AMBUSH [DIRECTION]," and take up covered firing positions.
+    
+    2. Soldiers in the kill zone assault directly through the enemy ambush using fire and movement techniques without waiting for orders. The manual emphasizes this is the only acceptable action within hand grenade range.
+    
+    3. Soldiers not in the kill zone:
+       - Identify enemy positions
+       - Initiate immediate suppressive fires against the enemy
+       - Take up covered positions
+       - Shift fires as friendly troops assault through the kill zone
+    
+    4. Squad/team leaders control fires and report to higher headquarters.
+    
+    5. Element leaders consolidate and reorganize once the enemy is destroyed.
+    
+    6. Element leaders report the situation and request medical evacuation if needed.
+    
+    OUTSIDE HAND GRENADE RANGE (beyond 50 meters):
+    
+    1. Soldiers in the kill zone immediately return fire, take cover, and shout "AMBUSH [DIRECTION]."
+    
+    2. Soldiers in the kill zone suppress the enemy by:
+       - Returning accurate, well-aimed fire
+       - Seeking covered positions
+       - Continuing suppressive fire
+    
+    3. Elements not in the kill zone maneuver against the enemy by:
+       - Identifying enemy positions
+       - Moving to a covered position that allows effective fires
+       - Executing a flank or envelopment of the enemy position
+    
+    4. Squad/team leaders control the direct fires of their elements.
+    
+    5. Element leaders consolidate and reorganize once the enemy is destroyed.
+    
+    The manual specifically emphasizes that immediate action in the kill zone is critical to survival and that hesitation, even to wait for orders, will result in increased casualties. It states: "The most effective and immediate action in the kill zone is to return fire immediately and assault through the ambush."
+    ```
+    
+    Return ONLY the specified number of questions and answers in the exact format shown, without numbering, additional commentary, or explanations. Ensure each question focuses on different battle drills or immediate action procedures from the manual content.
+  description: "Generates battle drill and immediate action questions from military training manuals"
+  json_output: false
+  system_prompt: "You are a senior military tactics instructor with extensive combat experience. You excel at creating questions that test knowledge of battle drills, immediate action procedures, and tactical standard operating procedures that are essential for survival and mission success in combat situations."
+  temperature: 0.7
