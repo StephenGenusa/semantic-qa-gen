@@ -45,7 +45,7 @@ class ChunkingEngine:
         self.logger = logging.getLogger(__name__)
 
         # Initialize available strategies using the chunking config section
-        chunking_config_dict = self.config.dict()
+        chunking_config_dict = self.config.model_dump(exclude_none=True)
         self.strategies: Dict[str, BaseChunkingStrategy] = {
             "fixed_size": FixedSizeChunkingStrategy(chunking_config_dict),
             "semantic": SemanticChunkingStrategy(chunking_config_dict)

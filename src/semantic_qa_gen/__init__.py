@@ -37,7 +37,14 @@ Basic Usage:
     results = project.process_document("path/to/document.pdf")
 
     # Save the results
-    results.save("output.json")
+    saved_path = project.save_questions(result=results,                     # The dictionary returned by process_document
+                                        output_path="questionsandanswers",  # Base filename (e.g., 'mydoc'). Extension is added.
+                                                                            # Saves to project's output/ dir by default.
+    format_name="json"                                                      # Specify the desired format adapter name
+    )
+    print(f"Results saved to: {saved_path}")
+
+
 
     # Advanced PDF processing with OCR and column detection
     pdf_config = {

@@ -70,14 +70,14 @@ class DocumentProcessor:
 
         # Text loader (always available)
         if loader_configs.text.enabled:
-            self.loaders.append(TextLoader(loader_configs.text.dict()))
+            self.loaders.append(TextLoader(loader_configs.text.model_dump(exclude_none=True)))
             self.logger.debug("Registered Text loader.")
 
         # PDF loader (optional dependency)
         if loader_configs.pdf.enabled:
             if PDFLoader:
                 try:
-                    self.loaders.append(PDFLoader(loader_configs.pdf.dict()))
+                    self.loaders.append(PDFLoader(loader_configs.pdf.model_dump(exclude_none=True)))
                     self.logger.debug("Registered PDF loader.")
                 except Exception as e:
                      # Catch potential init errors within the loader itself
@@ -89,7 +89,7 @@ class DocumentProcessor:
         if loader_configs.markdown.enabled:
             # MarkdownLoader has internal check for commonmark
             try:
-                self.loaders.append(MarkdownLoader(loader_configs.markdown.dict()))
+                self.loaders.append(MarkdownLoader(loader_configs.markdown.model_dump(exclude_none=True)))
                 self.logger.debug("Registered Markdown loader.")
             except Exception as e:
                  self.logger.error(f"Error initializing MarkdownLoader: {e}", exc_info=True)
@@ -99,7 +99,7 @@ class DocumentProcessor:
         if hasattr(loader_configs, 'docx') and loader_configs.docx.enabled:
             if DocxLoader:
                  try:
-                    self.loaders.append(DocxLoader(loader_configs.docx.dict()))
+                    self.loaders.append(DocxLoader(loader_configs.docx.model_dump(exclude_none=True)))
                     self.logger.debug("Registered DOCX loader.")
                  except Exception as e:
                      self.logger.error(f"Error initializing DocxLoader (dependency likely installed but failed init): {e}", exc_info=True)

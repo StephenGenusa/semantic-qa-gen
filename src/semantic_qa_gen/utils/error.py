@@ -38,6 +38,9 @@ class ChunkingError(SemanticQAGenError):
     """Exception raised for chunking errors."""
     pass
 
+class GeneratorError(SemanticQAGenError):
+    """Raised for errors during the question generation process."""
+    pass
 
 class LLMServiceError(SemanticQAGenError):
     """Exception raised for LLM service errors."""

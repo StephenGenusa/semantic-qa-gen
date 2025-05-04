@@ -512,39 +512,63 @@ class SemanticPipeline:
          compiled_metrics["stages"] = stage_details
          return compiled_metrics
 
-    # --- Document Info Helper (Unchanged) ---
     def _get_document_info(self, document: Document, path: str) -> Dict[str, Any]:
         """Helper to extract basic document info for the result dict."""
         meta = document.metadata
         doc_type_value = document.doc_type.value if isinstance(document.doc_type, Enum) else str(document.doc_type)
 
+        # Initialize doc_info with guaranteed values
         doc_info: Dict[str, Any] = {
             "id": document.id,
-            "path": path # Keep the original input path
+            "path": path,  # Keep the original input path
+            "doc_type": doc_type_value  # Ensure doc_type is always present
         }
-        # Add metadata fields if they exist
+
+        # Process metadata if it exists
+        meta_dict = {}  # Initialize meta_dict as an empty dictionary
         if meta:
-             # Use model_dump for Pydantic V2 models if metadata is one,
-             # otherwise assume it's already a dict or compatible dataclass.
-             if isinstance(meta, BaseModel):
-                  meta_dict = meta.model_dump(exclude_none=True)
-             else: # Assume dataclass or simple object with __dict__
+            # Priority 1: Check if it's a Pydantic BaseModel
+            if isinstance(meta, BaseModel):
                 try:
-                     meta_dict = meta.__dict__
-                except AttributeError:
-                     meta_dict = {} # Fallback if no obvious way to dictify
+                    meta_dict = meta.model_dump(exclude_none=True)
+                except Exception as dump_err:
+                    self.logger.warning(
+                        f"Failed Pydantic model_dump on metadata: {dump_err}. Skipping metadata fields.")
+                    meta_dict = {}  # Reset on dump error
+            # Priority 2: Check if it's already a dictionary
+            elif isinstance(meta, dict):
+                meta_dict = meta  # Use the dictionary directly
+            # Priority 3: Try converting other object types (like dataclass/simple object)
+            else:
+                try:
+                    # vars() is generally preferred over direct __dict__ access
+                    meta_dict = vars(meta)
+                except TypeError:  # vars() might fail on some types
+                    # Fallback to trying __dict__ if vars() fails
+                    try:
+                        meta_dict = meta.__dict__
+                    except AttributeError:
+                        # Last resort: If it can't be converted, log a warning and use an empty dict
+                        self.logger.warning(
+                            f"Metadata object of type {type(meta)} could not be converted to dict. Skipping metadata fields.")
+                        meta_dict = {}  # Ensure meta_dict remains empty
+                except Exception as e:  # Catch unexpected errors during vars() or __dict__ access
+                    self.logger.warning(
+                        f"Unexpected error converting metadata of type {type(meta)} to dict: {e}. Skipping metadata fields.")
+                    meta_dict = {}  # Ensure meta_dict remains empty
 
-             doc_info.update({
-                 "title": meta_dict.get('title'),
-                 "source": meta_dict.get('source', path), # Default source to path if not in meta
-                 "author": meta_dict.get('author'),
-                 "date": meta_dict.get('date'),
-                 "language": meta_dict.get('language'),
-                 "custom": meta_dict.get('custom'), # Include custom metadata field
-             })
+        # Now use the potentially populated meta_dict to update doc_info
+        # Add metadata fields only if they have a value
+        doc_info.update({
+            k: v for k, v in {
+                "title": meta_dict.get('title'),
+                "source": meta_dict.get('source', path),  # Default source to path if not in meta
+                "author": meta_dict.get('author'),
+                "date": meta_dict.get('date'),
+                "language": meta_dict.get('language'),
+                "custom": meta_dict.get('custom'),  # Include custom metadata field
+            }.items() if v is not None  # Filter out None values explicitly here
+        })
 
-        # Ensure doc_type is always present
-        doc_info["doc_type"] = doc_type_value
-
-        # Clean out None values at the end
-        return {k: v for k, v in doc_info.items() if v is not None}
+        # Function already has doc_info initialized and updated. Return it.
+        return doc_info

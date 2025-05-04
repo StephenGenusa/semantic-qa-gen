@@ -82,5 +82,5 @@ class BaseChunkingStrategy(ABC):
             'title': title,
             'section_path': section_path,
             'document_type': document.doc_type,
-            'metadata': document.metadata.__dict__ if document.metadata else {}
+            'metadata': document.metadata.model_dump(exclude_none=True) if document.metadata else {}
         }
