@@ -98,6 +98,14 @@ class OutputFormatter:
     def _initialize_adapters(self) -> None:
         """Initialize standard format adapters based on availability."""
         # Import adapters here to avoid potential circular imports at module level
+
+        try:
+            from semantic_qa_gen.output.adapters.jsonl import JSONLAdapter
+            # Pass the raw dict view of the config section
+            self.register_adapter("jsonl", JSONLAdapter(self.config.model_dump()))
+        except ImportError:
+            self.logger.warning("JSONLAdapter not found or failed to import.")
+
         try:
             from semantic_qa_gen.output.adapters.json import JSONAdapter
             # Pass the raw dict view of the config section

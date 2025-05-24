@@ -517,7 +517,13 @@ class PDFLoader(BaseLoader):
                         'is_bold': is_bold,
                         'position': {
                             'x': block["bbox"][0],
-                            'y': block["bbox"][1]
+                            'y': block["bbox"][1],
+                            'width': block["bbox"][2] - block["bbox"][0],
+                            'height': block["bbox"][3] - block["bbox"][1],
+                            'page_width': page_width,
+                            'page_height': page_height,
+                            'normalized_x': block["bbox"][0] / page_width,
+                            'normalized_y': block["bbox"][1] / page_height
                         }
                     }
                 )
@@ -542,7 +548,13 @@ class PDFLoader(BaseLoader):
                         'font_name': font_name,
                         'position': {
                             'x': block["bbox"][0],
-                            'y': block["bbox"][1]
+                            'y': block["bbox"][1],
+                            'width': block["bbox"][2] - block["bbox"][0],
+                            'height': block["bbox"][3] - block["bbox"][1],
+                            'page_width': page_width,
+                            'page_height': page_height,
+                            'normalized_x': block["bbox"][0] / page_width,
+                            'normalized_y': block["bbox"][1] / page_height
                         }
                     }
                 )

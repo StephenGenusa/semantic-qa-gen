@@ -1,49 +1,51 @@
-# filename: semantic_qa_gen/output/adapters/json.py
+# semantic_qa_gen/output/adapters/jsonl.py
 
-"""JSON format adapter for output formatting."""
+"""JSON Lines (JSONL) format adapter for output formatting."""
 
 import json
 import os
-import datetime # Keep for default metadata
+import logging
 from typing import Dict, List, Any, Optional
 
 from semantic_qa_gen.output.formatter import FormatAdapter
 from semantic_qa_gen.utils.error import OutputError
 
 
-class JSONAdapter(FormatAdapter):
+class JSONLAdapter(FormatAdapter):
     """
-    Format adapter for JSON output. Formats data as a single JSON object.
+    Format adapter for JSON Lines (JSONL) output.
+
+    Each question object is serialized as a separate JSON object on a new line.
+    Document metadata and statistics are not included in the JSONL file itself,
+    as the format is oriented towards record-based data processing.
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        Initialize the JSON adapter.
+        Initialize the JSONL adapter.
 
         Args:
             config: Optional configuration dictionary (expects OutputConfig structure).
+                    Relevant keys: json_ensure_ascii.
         """
         super().__init__(config)
-        # Access config keys safely with defaults
-        self.indent = self.config.get('json_indent', 2)
         self.ensure_ascii = self.config.get('json_ensure_ascii', False)
-        self.include_metadata = self.config.get('include_metadata', True)
-        self.include_stats = self.config.get('include_statistics', True)
+        self.logger = logging.getLogger(__name__) # Use adapter-specific logger
 
     def format(self, questions: List[Dict[str, Any]],
                document_info: Dict[str, Any],
-               statistics: Dict[str, Any]) -> Dict[str, Any]:
+               statistics: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Structure the data into a dictionary suitable for JSON serialization.
+        Format for JSONL with proper field mapping for AI fine-tuning.
         """
         try:
-            # Get fine-tuning format preference
+            # Get fine-tuning format from config
             fine_tuning_format = self.config.get('fine_tuning_format', 'default')
 
-            # Process questions for the selected fine-tuning format
             formatted_questions = []
             for q in questions:
                 if not isinstance(q, dict):
+                    self.logger.warning(f"Skipping non-dictionary item in JSONL data: {type(q)}")
                     continue
 
                 # Get the question and answer text
@@ -64,7 +66,7 @@ class JSONAdapter(FormatAdapter):
                     }
                     # Add metadata as a separate field
                     if 'metadata' in q:
-                        # Process metadata to ensure source uses basename and includes position data
+                        # Process metadata to standardize fields and ensure source is basename
                         record['metadata'] = self._process_metadata(q['metadata'])
 
                 elif fine_tuning_format == 'openai_legacy':
@@ -75,7 +77,7 @@ class JSONAdapter(FormatAdapter):
                     }
                     # Add metadata as a separate field
                     if 'metadata' in q:
-                        # Process metadata to ensure source uses basename and includes position data
+                        # Process metadata to standardize fields and ensure source is basename
                         record['metadata'] = self._process_metadata(q['metadata'])
 
                 elif fine_tuning_format == 'standard':
@@ -83,17 +85,19 @@ class JSONAdapter(FormatAdapter):
                     record = {
                         "input": question_text,
                         "output": answer_text,
-                        # Keep other fields except text/question/answer
                         **{k: v for k, v in q.items() if k not in ['text', 'question', 'answer']}
                     }
+
                     # Process metadata if it exists
                     if 'metadata' in record:
                         record['metadata'] = self._process_metadata(record['metadata'])
 
                 else:
-                    # Default: Keep original fields but standardize naming
-                    if 'text' in record:
-                        record['question'] = record.pop('text')
+                    # Default: Keep original fields but ensure 'question' exists
+                    if 'text' in record and 'question' not in record:
+                        record['question'] = record['text']
+                        # Remove the old key to avoid duplication
+                        record.pop('text', None)
 
                     # Process metadata if it exists
                     if 'metadata' in record:
@@ -101,30 +105,13 @@ class JSONAdapter(FormatAdapter):
 
                 formatted_questions.append(record)
 
-            # Create the core output structure
-            output = {
-                "document": document_info,
-                "questions": formatted_questions,
-            }
+            self.logger.debug(
+                f"Prepared {len(formatted_questions)} question records for JSONL output with fine-tuning format: {fine_tuning_format}")
+            return formatted_questions
 
-            # Conditionally include statistics
-            if self.include_stats:
-                output["statistics"] = statistics
-
-            # Conditionally include generator metadata
-            if self.include_metadata:
-                output["generation_metadata"] = {
-                    "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "generator": "SemanticQAGen",
-                    "format_version": "1.1",  # Example version bump
-                    "fine_tuning_format": fine_tuning_format
-                }
-
-            return output
-
-        except Exception as e:  # Catch unexpected errors during dict creation
-            self.logger.error(f"Internal error formatting data for JSON: {e}", exc_info=True)
-            raise OutputError(f"Failed to structure JSON output data: {str(e)}")
+        except Exception as e:
+            self.logger.error(f"Internal error preparing data for JSONL: {e}", exc_info=True)
+            raise OutputError(f"Failed to prepare JSONL output data: {str(e)}")
 
     def _process_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -134,7 +121,7 @@ class JSONAdapter(FormatAdapter):
             metadata: Original metadata dictionary
 
         Returns:
-            Processed metadata dictionary
+            Processed metadata dictionary with standardized fields
         """
         if not isinstance(metadata, dict):
             return metadata
@@ -148,7 +135,7 @@ class JSONAdapter(FormatAdapter):
                 result['document_metadata']['source'] = os.path.basename(result['document_metadata']['source'])
 
         # Ensure position info is included when available
-        if 'font_info' in result and 'position_info' not in result:
+        if 'position_info' not in result:
             # Extract any position data that might be in other fields
             position_data = {}
 
@@ -158,25 +145,26 @@ class JSONAdapter(FormatAdapter):
             if 'page_number' in result:
                 position_data['page_number'] = result['page_number']
 
-            # Check for PDF-specific position info
-            if result.get('document_metadata', {}).get('custom', {}).get('producer', '').startswith('PDF'):
-                # Extract position from font_info if it contains position data
-                for key, value in result.get('font_info', {}).items():
-                    if isinstance(value, dict) and 'position' in value:
-                        position_data[f"{key}_position"] = value['position']
+            # Add specific position data if available
+            for field in ['font_info', 'style_info']:
+                if field in result and isinstance(result[field], dict):
+                    for key, value in result[field].items():
+                        if isinstance(value, dict) and any(pos_key in value for pos_key in ['position', 'x', 'y']):
+                            position_data[f"{key}_position"] = value
 
             # Add position info if we found any
             if position_data:
                 result['position_info'] = position_data
-
         return result
 
-    def save(self, formatted_data: Dict[str, Any], output_path: str) -> str:
+    def save(self, formatted_data: List[Dict[str, Any]], output_path: str) -> str:
         """
-        Save the dictionary data as a JSON file.
+        Save the list of dictionaries as a JSONL file.
+
+        Each dictionary in the list is written as a JSON string on a separate line.
 
         Args:
-            formatted_data: Dictionary returned by the format method.
+            formatted_data: List of question dictionaries returned by the format method.
             output_path: Full path where to save the output file (including extension).
 
         Returns:
@@ -187,29 +175,41 @@ class JSONAdapter(FormatAdapter):
         """
         try:
             # Directory creation is handled by OutputFormatter.save_to_file
-            # Write the file using json.dump
             with open(output_path, 'w', encoding='utf-8') as file:
-                json.dump(
-                    formatted_data,
-                    file,
-                    indent=self.indent,
-                    ensure_ascii=self.ensure_ascii
-                 )
+                for record in formatted_data:
+                    if not isinstance(record, dict):
+                         self.logger.warning(f"Skipping non-dictionary item in JSONL data: {type(record)}")
+                         continue
+                    try:
+                        # Dump each dictionary as a compact JSON string on one line
+                        json_string = json.dumps(
+                            record,
+                            ensure_ascii=self.ensure_ascii,
+                            separators=(',', ':') # Compact representation
+                        )
+                        file.write(json_string + '\n')
+                    except TypeError as json_err:
+                         # Log specific error for the record and continue if possible
+                         record_id = record.get('id', 'unknown_id')
+                         self.logger.error(f"Failed to serialize record {record_id} to JSON for JSONL: {json_err}. Skipping record.")
+                         # Optionally, write an error placeholder? For now, skip.
+                         # file.write(json.dumps({"error": "serialization_failed", "id": record_id}) + '\n')
+
+
+            self.logger.info(f"Successfully saved {len(formatted_data)} records to JSONL file: {output_path}")
             return output_path # Return the confirmed save path
 
-        except TypeError as e:
-            # More specific error for serialization issues
-             self.logger.error(f"JSON serialization failed for {output_path}: {e}. Check data types.", exc_info=True)
-             raise OutputError(f"Failed to serialize data to JSON: {str(e)}")
         except (IOError, OSError) as e:
-             self.logger.error(f"File write error saving JSON to {output_path}: {e}")
-             raise OutputError(f"Failed to write JSON output file: {str(e)}")
+            self.logger.error(f"File write error saving JSONL to {output_path}: {e}")
+            raise OutputError(f"Failed to write JSONL output file: {str(e)}")
         except Exception as e:
-            self.logger.exception(f"Unexpected error saving JSON to {output_path}: {e}", exc_info=True)
-            raise OutputError(f"Unexpected error saving JSON output: {str(e)}")
+            # Catch other potential errors during the save loop
+            self.logger.exception(f"Unexpected error saving JSONL to {output_path}: {e}", exc_info=True)
+            raise OutputError(f"Unexpected error saving JSONL output: {str(e)}")
 
     @property
     def file_extension(self) -> str:
-        """Get the file extension for JSON format."""
-        return ".json"
+        """Get the file extension for JSON Lines format."""
+        return ".jsonl"
+
 

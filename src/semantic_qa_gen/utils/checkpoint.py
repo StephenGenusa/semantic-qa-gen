@@ -33,7 +33,8 @@ class CheckpointManager:
 
     # In semantic_qa_gen/utils/checkpoint.py - modify the __init__ method
 
-    def __init__(self, config: SemanticQAGenConfig):
+    def __init__(self, config: SemanticQAGenConfig, checkpoint_dir: str):
+        print(f"Ho {checkpoint_dir}")
         """
         Initialize the checkpoint manager.
 
@@ -46,27 +47,11 @@ class CheckpointManager:
         self.logger = logging.getLogger(__name__)
 
         # Access config attributes safely
-        checkpoint_dir = config.processing.checkpoint_dir
         self.enable_checkpoints = config.processing.enable_checkpoints
         self.checkpoint_interval = config.processing.checkpoint_interval
 
         # Resolve checkpoint directory path - handle relative paths
-        if not os.path.isabs(checkpoint_dir):
-            # Try to find project root from current working directory
-            from semantic_qa_gen.utils.project import ProjectManager
-            project_manager = ProjectManager()
-            project_root = project_manager.find_project_root()
-
-            if project_root:
-                # If checkpoint_dir starts with './', remove it
-                if checkpoint_dir.startswith('./'):
-                    checkpoint_dir = checkpoint_dir[2:]
-                # Make absolute path relative to project root
-                checkpoint_dir = os.path.join(project_root, checkpoint_dir)
-                self.logger.debug(f"Resolved checkpoint directory relative to project: {checkpoint_dir}")
-
         self.checkpoint_dir = checkpoint_dir
-
         # Create checkpoint directory if enabled and doesn't exist
         if self.enable_checkpoints:
             try:

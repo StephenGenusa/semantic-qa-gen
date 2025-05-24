@@ -63,16 +63,16 @@ class QuestionProcessor:
             A tuple containing:
             - list[Question]: A list of validated questions generated for this chunk.
             - dict[str, Any]: Statistics specific to the processing of this chunk.
-                               (e.g., generated, valid, rejected counts).
+                              (e.g., generated, valid, rejected counts).
         """
         chunk_stats = {
             "chunk_id": chunk.id,
             "generated_questions": 0,
-            "validated_questions": 0, # Renamed from valid_questions for clarity
-            "valid_questions_final": 0, # Final count after filtering
+            "validated_questions": 0,  # Renamed from valid_questions for clarity
+            "valid_questions_final": 0,  # Final count after filtering
             "rejected_questions": 0,
             "errors": [],
-             "categories": { # Count valid questions by category
+            "categories": {  # Count valid questions by category
                 "factual": 0,
                 "inferential": 0,
                 "conceptual": 0
@@ -86,6 +86,7 @@ class QuestionProcessor:
             # === Step 1: Generate Questions ===
             self.logger.debug(f"Starting question generation for chunk {chunk.id}")
             try:
+                # Passing the chunk and analysis directly to enable metadata enhancement
                 generated_questions = await self.question_generator.generate_questions(
                     chunk=chunk,
                     analysis=analysis
@@ -96,11 +97,12 @@ class QuestionProcessor:
                 self.logger.error(f"Question generation failed for chunk {chunk.id}: {e}")
                 chunk_stats["errors"].append(f"Generation Error: {str(e)}")
                 # Return empty list and stats indicating failure at this stage
-                return [], chunk_stats # Stop processing this chunk if generation fails critically
+                return [], chunk_stats  # Stop processing this chunk if generation fails critically
             except Exception as e:
-                 self.logger.exception(f"Unexpected error during question generation for chunk {chunk.id}", exc_info=True)
-                 chunk_stats["errors"].append(f"Unexpected Generation Error: {str(e)}")
-                 return [], chunk_stats # Stop processing
+                self.logger.exception(f"Unexpected error during question generation for chunk {chunk.id}",
+                                      exc_info=True)
+                chunk_stats["errors"].append(f"Unexpected Generation Error: {str(e)}")
+                return [], chunk_stats  # Stop processing
 
             # === Step 2: Validate Questions (if any were generated) ===
             if generated_questions:
@@ -112,7 +114,8 @@ class QuestionProcessor:
                         questions=generated_questions,
                         chunk=chunk
                     )
-                    chunk_stats["validated_questions"] = len(generated_questions) # Count how many went through validation
+                    chunk_stats["validated_questions"] = len(
+                        generated_questions)  # Count how many went through validation
 
                     # Filter valid questions based on the results
                     # This helper method in ValidationEngine checks the aggregated 'is_valid' flag
@@ -121,7 +124,8 @@ class QuestionProcessor:
                         validation_results
                     )
                     chunk_stats["valid_questions_final"] = len(valid_questions)
-                    chunk_stats["rejected_questions"] = chunk_stats["generated_questions"] - chunk_stats["valid_questions_final"]
+                    chunk_stats["rejected_questions"] = chunk_stats["generated_questions"] - chunk_stats[
+                        "valid_questions_final"]
 
                     self.logger.info(
                         f"Validation complete for chunk {chunk.id}: "
@@ -138,14 +142,16 @@ class QuestionProcessor:
                     valid_questions = []
                     chunk_stats["validated_questions"] = 0
                     chunk_stats["valid_questions_final"] = 0
-                    chunk_stats["rejected_questions"] = chunk_stats["generated_questions"] # All rejected due to validation failure
+                    chunk_stats["rejected_questions"] = chunk_stats[
+                        "generated_questions"]  # All rejected due to validation failure
                 except Exception as e:
-                     self.logger.exception(f"Unexpected error during question validation for chunk {chunk.id}", exc_info=True)
-                     chunk_stats["errors"].append(f"Unexpected Validation Error: {str(e)}")
-                     valid_questions = [] # Safer default
-                     chunk_stats["validated_questions"] = 0
-                     chunk_stats["valid_questions_final"] = 0
-                     chunk_stats["rejected_questions"] = chunk_stats["generated_questions"]
+                    self.logger.exception(f"Unexpected error during question validation for chunk {chunk.id}",
+                                          exc_info=True)
+                    chunk_stats["errors"].append(f"Unexpected Validation Error: {str(e)}")
+                    valid_questions = []  # Safer default
+                    chunk_stats["validated_questions"] = 0
+                    chunk_stats["valid_questions_final"] = 0
+                    chunk_stats["rejected_questions"] = chunk_stats["generated_questions"]
 
             # === Step 3: Update Category Stats for Valid Questions ===
             if valid_questions:
@@ -155,7 +161,8 @@ class QuestionProcessor:
                         chunk_stats["categories"][category] += 1
                     else:
                         # Log if unexpected category encountered
-                        self.logger.warning(f"Encountered unexpected question category '{category}' in chunk {chunk.id}. Adding to stats.")
+                        self.logger.warning(
+                            f"Encountered unexpected question category '{category}' in chunk {chunk.id}. Adding to stats.")
                         chunk_stats["categories"][category] = 1
 
             return valid_questions, chunk_stats
@@ -164,4 +171,4 @@ class QuestionProcessor:
             # Catch-all for any truly unexpected error within this method's orchestration
             self.logger.exception(f"Critical unexpected error processing chunk {chunk.id}", exc_info=True)
             chunk_stats["errors"].append(f"Critical Processor Error: {str(e)}")
-            return [], chunk_stats # Return empty results and error state
+            return [], chunk_stats  # Return empty results and error state

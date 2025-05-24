@@ -42,6 +42,7 @@ class ConfigManager:
         """Initializes the ConfigManager."""
         self._config: Optional[SemanticQAGenConfig] = None
         self.logger = logging.getLogger(__name__)
+        self.config_path = config_path
 
         if config_path and config_dict:
             raise ConfigurationError("Provide either config_path or config_dict, not both.")

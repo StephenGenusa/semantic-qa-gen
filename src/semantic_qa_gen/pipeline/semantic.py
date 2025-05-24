@@ -1,7 +1,10 @@
+# semantic_qa_gen/pipeline/semantic.py
+
 """Semantic processing pipeline with optimized concurrency."""
 
 import os
 import logging
+import re
 import asyncio
 import time
 from enum import Enum
@@ -42,6 +45,9 @@ class SemanticPipeline:
         self.performance_metrics: Dict[str, Any] = {"start_time": 0.0, "end_time": 0.0, "total_time": 0.0, "stage_times": {}}
         self.config: SemanticQAGenConfig
 
+        # Add failed chunks tracking dictionary
+        self.failed_chunks: Dict[str, Dict[str, Any]] = {}  # {chunk_id: {'content': str, 'errors': [str], 'details': dict}}
+
         try:
             # Access the validated config object (ensures Pydantic validation ran)
             self.config = config_manager.config
@@ -69,7 +75,7 @@ class SemanticPipeline:
         self.document_processor = DocumentProcessor(self.config_manager)
         self.chunking_engine = ChunkingEngine(self.config_manager)
         # Create PromptManager instance once - shared if needed
-        self.prompt_manager = PromptManager() # TODO: Allow passing prompts_dir from config?
+        self.prompt_manager = PromptManager(os.path.join(os.path.dirname(self.config_manager.config_path), 'templates')) # TODO: Allow passing prompts_dir from config?
         # Pass PromptManager to TaskRouter
         self.task_router = TaskRouter(self.config_manager, self.prompt_manager)
         # Initialize the SemanticAnalyzer, passing router and prompt manager
@@ -80,7 +86,7 @@ class SemanticPipeline:
         # Initialize the QuestionProcessor with generator and validator engine
         self.question_processor = QuestionProcessor(self.config_manager, self.question_generator, self.validation_engine)
         # CheckpointManager needs the full validated config object
-        self.checkpoint_manager = CheckpointManager(self.config)
+        self.checkpoint_manager = CheckpointManager(self.config, os.path.join(os.path.dirname(self.config_manager.config_path), 'checkpoints'))
         # Get progress bar setting from config
         show_progress = getattr(self.config.processing, 'log_level', 'INFO') in ['INFO', 'DEBUG']
         self.progress_reporter = ProgressReporter(show_progress_bar=show_progress)
@@ -110,6 +116,9 @@ class SemanticPipeline:
         start_chunk_index = 0
         checkpoint_interval = self.config.processing.checkpoint_interval
         debug_mode = self.config.processing.debug_mode # Cache for logging
+
+        # Clear failed chunks tracking at the start of processing
+        self.failed_chunks.clear()
 
         try:
             # === Stage 1: Load Document & Extract Sections ===
@@ -214,6 +223,17 @@ class SemanticPipeline:
                      processed_count_in_run += 1
                      overall_stats["processed_chunks"] = start_chunk_index + processed_count_in_run
                      overall_stats["failed_qa_chunks"] += 1 # Count failure here too
+
+                     # Track failure
+                     self.failed_chunks[chunk_id] = {
+                         'content': chunk.content[:500] + "..." if len(chunk.content) > 500 else chunk.content,
+                         'errors': ["Analysis failed or missing before question generation"],
+                         'details': {
+                             'analysis_notes': getattr(analysis, 'notes', "No analysis available"),
+                             'stage': 'analysis'
+                         }
+                     }
+
                      self.progress_reporter.update_progress(processed_count_in_run, num_to_process, {"stage": "qa_skipped", "valid_qs": len(all_processed_questions)})
                      current_chunk_abs_index += 1
                      continue
@@ -235,10 +255,35 @@ class SemanticPipeline:
                         self.logger.warning(f"Chunk {chunk_id} processed with errors: {chunk_stats['errors']}")
                         overall_stats["failed_qa_chunks"] += 1 # Count as failed if errors occurred
 
+                        # Store detailed failure information
+                        self.failed_chunks[chunk_id] = {
+                            'content': chunk.content[:500] + "..." if len(chunk.content) > 500 else chunk.content,
+                            'errors': chunk_stats.get('errors', []),
+                            'details': {
+                                'analysis': analysis.model_dump() if hasattr(analysis, 'model_dump') else str(analysis),
+                                'stats': chunk_stats,
+                                'category_counts': chunk_stats.get('categories', {}),
+                                'stage': 'question_generation'
+                            }
+                        }
+
                 except Exception as e:
                     # Catch unexpected errors specifically from QuestionProcessor.process_chunk call
-                    self.logger.exception(f"Unexpected error from QuestionProcessor for chunk {chunk_id}: {e}", exc_info=debug_mode)
+                    error_message = f"Unexpected error from QuestionProcessor for chunk {chunk_id}: {str(e)}"
+                    self.logger.exception(error_message, exc_info=debug_mode)
                     overall_stats["failed_qa_chunks"] += 1
+
+                    # Store failure details with traceback
+                    self.failed_chunks[chunk_id] = {
+                        'content': chunk.content[:500] + "..." if len(chunk.content) > 500 else chunk.content,
+                        'errors': [error_message],
+                        'details': {
+                            'traceback': traceback.format_exc(),
+                            'analysis_type': str(type(analysis)),
+                            'stage': 'question_processing'
+                        }
+                    }
+
                     # Aggregate basic stats even on failure if possible
                     self._aggregate_stats(overall_stats, {"chunk_id": chunk_id, "errors": [f"Processor Crash: {str(e)}"]})
                     # Continue to next chunk

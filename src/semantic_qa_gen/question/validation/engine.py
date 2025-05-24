@@ -4,6 +4,7 @@ import logging
 import asyncio
 import json
 import re
+import datetime
 from typing import Dict, Any, Optional, List, Type, Tuple
 
 # Project Imports
@@ -217,10 +218,50 @@ class ValidationEngine:
         return final_results
 
     async def _validate_question_workflow(self, question: Question, chunk: Chunk, needs_llm_call: bool) -> Dict[str, Any]:
-        """Helper coroutine to manage LLM call and validation for one question."""
+        """Helper coroutine to manage LLM call and validation for one question, adding validation results to metadata."""
         shared_llm_data = await self._get_shared_llm_validation_data(question, chunk) if needs_llm_call else None
         individual_results = await self.validate_single_question(question, chunk, shared_llm_data)
-        return self._aggregate_validation_results(question.id, individual_results)
+
+        # Get the aggregated validation result
+        result = self._aggregate_validation_results(question.id, individual_results)
+
+        # Add validation results to question metadata for fine-tuning
+        try:
+            if not question.metadata:
+                question.metadata = {}
+
+            # Store validation results in question metadata
+            validation_metadata = {
+                'validation_is_valid': result['is_valid'],
+                'validation_scores': result['scores'],
+                'validation_reasons': result['reasons']
+            }
+
+            if result['suggested_improvements']:
+                validation_metadata['validation_suggestions'] = result['suggested_improvements']
+
+            # Store detailed validator results
+            validator_details = {}
+            for validator_name, validator_result in result['validation_results'].items():
+                if isinstance(validator_result, ValidationResult):
+                    validator_details[validator_name] = {
+                        'is_valid': validator_result.is_valid,
+                        'scores': validator_result.scores,
+                        'reasons': validator_result.reasons
+                    }
+
+            if validator_details:
+                validation_metadata['validator_details'] = validator_details
+
+            # Add validation timestamp
+            validation_metadata['validation_timestamp'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+            question.metadata['validation'] = validation_metadata
+
+        except Exception as e:
+            self.logger.warning(f"Could not add validation metadata to question {question.id}: {e}")
+
+        return result
 
     def get_valid_questions(self, questions: List[Question],
                           aggregated_results: Dict[str, Dict[str, Any]]) -> List[Question]:

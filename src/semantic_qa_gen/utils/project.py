@@ -18,22 +18,28 @@ class ProjectManager:
     Handles creation of project directories, configuration files,
     and templates in a standardized structure.
     """
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(ProjectManager, cls).__new__(cls)
+            cls.logger = logging.getLogger(__name__)
+        return cls._instance
+
 
     DEFAULT_PROJECT_NAME = "QAGenProject"
 
     # Standard directory structure
     DIRECTORIES = {
         "config": "Configuration files",
-        "config/prompts": "Prompt templates",
-        "input": "Input documents",
-        "output": "Generated output files",
+        "prompts": "Prompt templates",
+        "checkpoints": "Checkpoint files",
+        "input": "User input documents",
+        "output": "Output files",
         "logs": "Log files",
         "temp": "Temporary files and checkpoints"
     }
 
-    def __init__(self):
-        """Initialize the ProjectManager."""
-        self.logger = logging.getLogger(__name__)
 
     def create_project_structure(self, project_path: Optional[str] = None) -> str:
         """
@@ -64,8 +70,8 @@ class ProjectManager:
                 os.makedirs(dir_path, exist_ok=True)
                 self.logger.debug(f"Created directory: {dir_path} ({description})")
 
-            # Copy default templates to project
-            self._copy_default_templates(project_dir)
+            # # Copy default templates to project
+            # self._copy_default_templates(project_dir)
 
             # Create default system configuration
             self._create_default_system_config(project_dir)
@@ -78,46 +84,6 @@ class ProjectManager:
         except OSError as e:
             raise ConfigurationError(f"Error creating project structure: {e}")
 
-    # filename: semantic_qa_gen/utils/project.py
-    # Fix for _copy_default_templates method
-
-    def _copy_default_templates(self, project_dir: str) -> None:
-        """
-        Copy default prompt templates to project config/prompts directory.
-        ONLY if they don't already exist.
-
-        Args:
-            project_dir: Project directory path.
-        """
-        # Locate the package's template directory
-        package_templates_dir = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "llm", "prompts", "templates"
-        )
-
-        target_dir = os.path.join(project_dir, "config", "prompts")
-
-        if not os.path.exists(package_templates_dir):
-            self.logger.warning("Default templates directory not found in package.")
-            return
-
-        try:
-            for template_file in os.listdir(package_templates_dir):
-                if not template_file.endswith(('.yaml', '.yml')):
-                    continue
-
-                source = os.path.join(package_templates_dir, template_file)
-                destination = os.path.join(target_dir, template_file)
-
-                # CHECK IF FILE EXISTS FIRST - DON'T OVERWRITE!
-                if os.path.exists(destination):
-                    self.logger.debug(f"Template {template_file} already exists. Not overwriting.")
-                    continue
-
-                shutil.copy2(source, destination)
-                self.logger.debug(f"Copied new template: {template_file}")
-        except Exception as e:
-            self.logger.error(f"Error copying templates: {e}")
 
     def _create_default_system_config(self, project_dir: str) -> None:
         """
@@ -145,7 +111,7 @@ class ProjectManager:
             config = config_manager.config
 
             # Update default paths to match project structure (relative to project dir)
-            config.processing.checkpoint_dir = "./temp/checkpoints"
+            config.processing.checkpoint_dir = "./checkpoints"
             config.processing.log_level = "INFO"
             config.output.output_dir = "./output"
 
@@ -248,3 +214,28 @@ class ProjectManager:
             return os.path.join(project_root, base_dir, path)
         else:
             return os.path.join(project_root, path)
+
+    def create_project(self, project_path: Optional[str] = None) -> str:
+        """
+        Create a new QAGenProject structure.
+
+        This creates directories and default configuration files
+        for a new SemanticQAGen project.
+
+        Args:
+            project_path: Optional custom path for the project.
+
+        Returns:
+            Path to the created project directory.
+        """
+        try:
+            project_dir = self.project_manager.create_project_structure(project_path)
+            # Update self.project_path if a new project was created successfully
+            # Or potentially re-initialize if necessary? Simpler to just update path.
+            self.project_path = project_dir
+            self.logger.info(f"Created new project at: {project_dir}")
+            return project_dir
+        except Exception as e:
+            self.logger.error(f"Failed to create project: {e}")
+            raise ConfigurationError(f"Project creation failed: {str(e)}") from e
+

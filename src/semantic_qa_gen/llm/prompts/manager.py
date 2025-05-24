@@ -4,9 +4,9 @@ import os
 import yaml
 import logging
 import string
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Set
 
-from semantic_qa_gen.utils.error import LLMServiceError
+from semantic_qa_gen.utils.error import LLMServiceError, ConfigurationError
 
 
 class PromptTemplate:
@@ -58,6 +58,12 @@ class PromptManager:
     providing them on demand for various LLM tasks.
     """
 
+    # Define essential prompt keys that the system requires
+    ESSENTIAL_PROMPTS = {
+        "chunk_analysis",
+        "question_generation"
+    }
+
     def __init__(self, prompts_dir: Optional[str] = None):
         """
         Initialize the prompt manager.
@@ -73,56 +79,198 @@ class PromptManager:
             os.path.dirname(__file__), "templates"
         )
 
+        # Track which prompts were loaded from files
+        self.loaded_from_files: Set[str] = set()
+
         # Register built-in prompts
         self._register_builtin_prompts()
+
+        # Verify essential prompts
+        self._verify_essential_prompts()
 
     def _register_builtin_prompts(self) -> None:
         """Register built-in prompt templates."""
         # Load from YAML files if directory exists
+        loaded_any = False
+        missing_essential = set()
+
         if os.path.exists(self.prompts_dir):
             for filename in os.listdir(self.prompts_dir):
                 if filename.endswith('.yaml') or filename.endswith('.yml'):
                     try:
                         path = os.path.join(self.prompts_dir, filename)
-                        self._load_from_file(path)
+                        keys_loaded = self._load_from_file(path)
+                        if keys_loaded:
+                            loaded_any = True
+                            self.logger.info(f"Loaded {len(keys_loaded)} prompt templates from {filename}")
+
+                            # Check if we loaded essential prompts
+                            for key in self.ESSENTIAL_PROMPTS:
+                                if key in keys_loaded:
+                                    self.logger.info(f"Loaded essential prompt '{key}' from {filename}")
                     except Exception as e:
                         self.logger.error(f"Failed to load prompt from {filename}: {str(e)}")
 
         # Register fallback prompts if none were loaded
-        if not self.prompts:
+        if not loaded_any:
+            self.logger.warning("No prompt templates loaded from files. Using fallback prompts.")
             self._register_fallback_prompts()
-    
-    def _load_from_file(self, path: str) -> None:
+        else:
+            # Check for missing essential prompts
+            missing_essential = self.ESSENTIAL_PROMPTS - set(self.prompts.keys())
+            if missing_essential:
+                self.logger.warning(f"Missing essential prompts after loading files: {missing_essential}")
+                self._register_selected_fallbacks(missing_essential)
+
+    def _load_from_file(self, path: str) -> Set[str]:
         """
         Load prompt templates from a YAML file.
-        
+
         Args:
             path: Path to the YAML file.
+
+        Returns:
+            Set of keys loaded from this file.
+
+        Raises:
+            ConfigurationError: If the file contains invalid prompt definitions.
         """
+        loaded_keys = set()
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 prompt_data = yaml.safe_load(f)
-                
+
             if not isinstance(prompt_data, dict):
-                self.logger.error(f"Invalid prompt file format: {path}")
-                return
-                
+                raise ConfigurationError(f"Invalid prompt file format: {path}. Expected a dictionary.")
+
             for name, data in prompt_data.items():
-                if not isinstance(data, dict) or 'template' not in data:
-                    self.logger.error(f"Invalid prompt definition for {name} in {path}")
+                if not isinstance(data, dict):
+                    self.logger.error(f"Invalid prompt definition for {name} in {path}: Not a dictionary")
                     continue
-                    
+
+                if 'template' not in data:
+                    self.logger.error(f"Invalid prompt definition for {name} in {path}: Missing 'template' field")
+                    continue
+
                 template = data.pop('template')
+                if not isinstance(template, str):
+                    self.logger.error(f"Invalid prompt definition for {name} in {path}: 'template' is not a string")
+                    continue
+
                 metadata = data
-                
+
                 # Add file source to metadata
                 metadata['source'] = os.path.basename(path)
-                
+
+                # Log template preview for debugging
+                template_preview = template[:100] + '...' if len(template) > 100 else template
+                self.logger.debug(f"Loading prompt '{name}' from {path}: {template_preview}")
+
+                # Check for essential prompt
+                if name in self.ESSENTIAL_PROMPTS:
+                    if name == "question_generation" and "analyze" in template.lower()[:100]:
+                        self.logger.warning(
+                            f"WARNING: The prompt '{name}' in {path} appears to be an analysis prompt, "
+                            f"not a question generation prompt. This may cause failures."
+                        )
+
                 self.register_prompt(name, template, metadata)
-                
+                loaded_keys.add(name)
+                self.loaded_from_files.add(name)
+
+            return loaded_keys
+
+        except yaml.YAMLError as e:
+            raise ConfigurationError(f"Failed to parse YAML file {path}: {str(e)}")
         except Exception as e:
-            self.logger.error(f"Failed to load prompts from {path}: {str(e)}")
-    
+            raise ConfigurationError(f"Failed to load prompts from {path}: {str(e)}")
+
+    def _register_selected_fallbacks(self, missing_keys: Set[str]) -> None:
+        """Register only the specified fallback prompts."""
+        if "chunk_analysis" in missing_keys:
+            self.logger.info("Registering fallback chunk_analysis prompt")
+            self.register_prompt(
+                "chunk_analysis",
+                """
+                Please analyze the following text passage and provide information about its 
+                educational value for generating quiz questions. Focus on aspects like information
+                density (0.0-1.0), topic coherence (0.0-1.0), complexity (0.0-1.0), and how many
+                questions of different types could be generated from it.
+
+                Text passage:
+                ---
+                {chunk_content}
+                ---
+                
+                Include estimates for:
+                - factual questions (direct information in the text)
+                - inferential questions (requiring connecting information)
+                - conceptual questions (dealing with broader principles)
+                
+                Return your analysis in the following JSON format EXACTLY:
+                {{
+                    "information_density":  0.0-1.0,
+                    "topic_coherence": 0.0-1.0,
+                    "complexity": 0.0-1.0,
+                    "estimated_question_yield": {{
+                        "factual": number,
+                        "inferential": number,
+                        "conceptual": number,
+                    }},
+                    "key_concepts": ["concept1", "concept2", ...],
+                    "notes": string
+                }}
+
+                **CRITICAL: Your response MUST be ONLY a single, strictly valid JSON object conforming to RFC 8259.**
+                **DO NOT include any comments (like // or #) or any other text outside the JSON structure.**
+                Adjust the numerical and string values based on the actual content provided, maintaining the precise JSON structure.
+    """,
+                {
+                    "description": "Analyzes a text chunk for information density and question potential",
+                    "json_output": True,
+                    "system_prompt": "You are an AI assistant specialized in analyzing text passages for educational content."
+                }
+            )
+
+        if "question_generation" in missing_keys:
+            self.logger.info("Registering fallback question_generation prompt")
+            self.register_prompt(
+                "question_generation",
+                """
+                Generate questions and answers based on the following text. Create {total_questions} questions total:
+                - {factual_count} factual questions (based directly on information in the text)
+                - {inferential_count} inferential questions (requiring connecting information from the text)
+                - {conceptual_count} conceptual questions (addressing broader principles or ideas)
+                
+                Text:
+                ---
+                {chunk_content}
+                ---
+                
+                Key concepts: {key_concepts}
+                
+                Format your response as a JSON array of question objects with the following structure:
+                [
+                    {{
+                        "question": "The question text",
+                        "answer": "The comprehensive answer",
+                        "category": "factual|inferential|conceptual"
+                    }},
+                    ...
+                ]
+                
+                Make the answers comprehensive and accurate based on the text. Each answer should fully explain the concept
+                being asked about, not just provide a short answer.
+                """,
+                {
+                    "description": "Generates questions and answers based on a text chunk",
+                    "json_output": True,
+                    "system_prompt": "You are an AI assistant specialized in creating educational questions and answers."
+                }
+            )
+
+        # Add other essential prompts as needed
+
     def _register_fallback_prompts(self) -> None:
         """Register fallback prompts if no prompts were loaded from files."""
         # Analysis prompt
@@ -144,27 +292,31 @@ class PromptManager:
             - inferential questions (requiring connecting information)
             - conceptual questions (dealing with broader principles)
             
-            Format your response as JSON with the following structure:
+            Return your analysis in the following JSON format EXACTLY:
             {{
-                "information_density": float,
-                "topic_coherence": float,
-                "complexity": float,
+                "information_density":  0.0-1.0,
+                "topic_coherence": 0.0-1.0,
+                "complexity": 0.0-1.0,
                 "estimated_question_yield": {{
-                    "factual": int,
-                    "inferential": int,
-                    "conceptual": int
+                    "factual": number,
+                    "inferential": number,
+                    "conceptual": number,
                 }},
-                "key_concepts": [string],
+                "key_concepts": ["concept1", "concept2", ...],
                 "notes": string
             }}
-            """,
+
+            **CRITICAL: Your response MUST be ONLY a single, strictly valid JSON object conforming to RFC 8259.**
+            **DO NOT include any comments (like // or #) or any other text outside the JSON structure.**
+            Adjust the numerical and string values based on the actual content provided, maintaining the precise JSON structure.
+""",
             {
                 "description": "Analyzes a text chunk for information density and question potential",
                 "json_output": True,
                 "system_prompt": "You are an AI assistant specialized in analyzing text passages for educational content."
             }
         )
-        
+
         # Question generation prompt
         self.register_prompt(
             "question_generation",
@@ -198,7 +350,7 @@ class PromptManager:
                 "system_prompt": "You are an AI assistant specialized in creating educational questions and answers."
             }
         )
-        
+
         # Question validation prompt
         self.register_prompt(
             "question_validation",
@@ -219,7 +371,7 @@ class PromptManager:
             2. Answer completeness: Does the answer fully address the question?
             3. Question clarity: Is the question clear and unambiguous?
             
-            Format your response as JSON with the following structure:
+            Return your analysis in the following JSON format EXACTLY:
             {{
                 "is_valid": true/false,
                 "factual_accuracy": float (0.0-1.0),
@@ -228,13 +380,36 @@ class PromptManager:
                 "reasons": [string],
                 "suggested_improvements": string (optional)
             }}
-            """,
+
+            **CRITICAL: Your response MUST be ONLY a single, strictly valid JSON object conforming to RFC 8259.**
+            **DO NOT include any comments (like // or #) or any other text outside the JSON structure.**
+            Adjust the numerical and string values based on the actual content provided, maintaining the precise JSON structure.
+""",
             {
                 "description": "Validates a question-answer pair against the source text",
                 "json_output": True,
                 "system_prompt": "You are an AI assistant specialized in evaluating educational questions and answers."
             }
         )
+
+    def _verify_essential_prompts(self) -> None:
+        """Verify that all essential prompts are available."""
+        missing = self.ESSENTIAL_PROMPTS - set(self.prompts.keys())
+        if missing:
+            error_msg = f"Critical prompt templates missing: {', '.join(missing)}"
+            self.logger.error(error_msg)
+            raise ConfigurationError(error_msg)
+
+        # Verify question_generation is actually generating questions, not analysis
+        if "question_generation" in self.prompts:
+            template = self.prompts["question_generation"].template.lower()
+            if "analyze" in template[:100] and "density" in template and "coherence" in template:
+                warning = (
+                    "WARNING: The 'question_generation' prompt appears to be an analysis prompt, "
+                    "not a question generation prompt. This will cause generation failures."
+                )
+                self.logger.error(warning)
+                # Consider raising an error here if you want to fail fast
     
     def register_prompt(self, name: str, template: str, 
                        metadata: Optional[Dict[str, Any]] = None) -> None:
@@ -247,7 +422,7 @@ class PromptManager:
             metadata: Optional metadata.
         """
         self.prompts[name] = PromptTemplate(template, metadata)
-        self.logger.debug(f"Registered prompt template: {name}")
+        self.logger.info(f"Registered prompt template: {name}")
     
     def get_prompt(self, name: str) -> PromptTemplate:
         """

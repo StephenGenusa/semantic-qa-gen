@@ -137,21 +137,21 @@ class DocxLoader(BaseLoader):
         )
         
         return metadata
-    
+
     def _extract_content_with_structure(self, doc) -> Tuple[str, List[Section]]:
         """
         Extract content from DOCX with structure preservation.
-        
+
         Args:
             doc: Open DOCX document.
-            
+
         Returns:
             Tuple of (full_text, sections_list)
         """
         # Extract paragraphs and headings
         full_text_parts = []
         sections = []
-        
+
         heading_styles = {
             'Heading 1': 1,
             'Heading 2': 2,
@@ -161,33 +161,45 @@ class DocxLoader(BaseLoader):
             'Heading 6': 6,
             'Title': 0,  # Document title
         }
-        
+
+        # Count total paragraphs for relative positioning
+        total_paragraphs = len(doc.paragraphs)
+
         for para_index, para in enumerate(doc.paragraphs):
             if not para.text.strip():
                 continue
-                
+
             # Check if this is a heading
             style_name = para.style.name if para.style else ""
             is_heading = style_name in heading_styles
-            
+
+            # Calculate relative positioning within the document
+            rel_position = para_index / total_paragraphs if total_paragraphs > 0 else 0
+
             if is_heading:
                 # This is a heading
                 level = heading_styles[style_name]
                 section_type = SectionType.TITLE if style_name == 'Title' else SectionType.HEADING
-                
+
                 section = Section(
                     content=para.text,
                     section_type=section_type,
                     level=level,
                     metadata={
                         'style': style_name,
-                        'position': para_index
+                        'position': {
+                            'paragraph_index': para_index,
+                            'relative_position': rel_position,
+                            'total_paragraphs': total_paragraphs,
+                            'section_type': 'heading',
+                            'heading_level': level
+                        }
                     }
                 )
-                
+
                 sections.append(section)
                 full_text_parts.append(para.text)
-                
+
             else:
                 # Regular paragraph
                 section = Section(
@@ -196,14 +208,19 @@ class DocxLoader(BaseLoader):
                     level=0,
                     metadata={
                         'style': style_name,
-                        'position': para_index
+                        'position': {
+                            'paragraph_index': para_index,
+                            'relative_position': rel_position,
+                            'total_paragraphs': total_paragraphs,
+                            'section_type': 'paragraph'
+                        }
                     }
                 )
-                
+
                 sections.append(section)
                 full_text_parts.append(para.text)
-        
+
         # Join the text parts
         full_text = "\n\n".join(full_text_parts)
-        
+
         return full_text, sections
