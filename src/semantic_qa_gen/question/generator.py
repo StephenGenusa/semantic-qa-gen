@@ -236,11 +236,20 @@ class QuestionGenerator:
             }
         )
 
-
     def _create_questions_from_parsed(self, parsed_list: List[Dict[str, Any]], chunk_id: str,
                                       chunk: Optional[Chunk] = None,
                                       analysis: Optional[AnalysisResult] = None) -> List[Question]:
-        """Converts parsed dictionary items into Question objects with comprehensive metadata for fine-tuning."""
+        """Converts parsed dictionary items into Question objects with comprehensive metadata for fine-tuning.
+
+        Args:
+            parsed_list: A list of dictionaries, where each dict represents a potential Q&A pair.
+            chunk_id: The ID of the source chunk.
+            chunk: The full Chunk object, used to access original content and context.
+            analysis: The analysis result for the chunk, used for metadata enrichment.
+
+        Returns:
+            A list of populated Question objects.
+        """
         questions: List[Question] = []
         valid_categories = {"factual", "inferential", "conceptual", "implementation", "architectural",
                             "troubleshooting"}
@@ -360,11 +369,12 @@ class QuestionGenerator:
                     if 'complexity' in analysis_data:
                         enhanced_metadata['complexity'] = analysis_data['complexity']
 
-                # Create Question object with comprehensive metadata
+                # Create Question object with comprehensive metadata and the source context
                 questions.append(Question(
                     text=question_text,
                     answer=answer_text,
                     chunk_id=chunk_id,
+                    context=chunk.content if chunk else "Context not available.",
                     category=category,
                     metadata=enhanced_metadata
                 ))

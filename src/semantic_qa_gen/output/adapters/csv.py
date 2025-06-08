@@ -34,166 +34,118 @@ class CSVAdapter(FormatAdapter):
     def format(self, questions: List[Dict[str, Any]],
                document_info: Dict[str, Any],
                statistics: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Format question-answer pairs into CSV with standard field names for AI fine-tuning.
+        """Formats Q&A pairs into CSV rows, including a 'context' column.
+
+        Args:
+            questions: A list of question dictionaries.
+            document_info: Information about the source document.
+            statistics: Processing statistics.
+
+        Returns:
+            A dictionary containing 'headers' and 'rows' for the CSV file,
+            and the original 'statistics'.
+
+        Raises:
+            OutputError: If structuring the CSV data fails.
         """
         try:
-            # Get fine-tuning format preference
             fine_tuning_format = self.config.get('fine_tuning_format', 'default')
-
-            # Define standard headers based on fine-tuning format
             if fine_tuning_format == 'openai_legacy':
-                standard_headers = ['id', 'prompt', 'completion', 'category', 'chunk_id']
+                standard_headers = ['id', 'prompt', 'completion', 'context', 'category', 'chunk_id']
             elif fine_tuning_format == 'standard':
-                standard_headers = ['id', 'input', 'output', 'category', 'chunk_id']
+                standard_headers = ['id', 'input', 'output', 'context', 'category', 'chunk_id']
             else:
-                # Default or formats that don't map easily to CSV
-                standard_headers = ['id', 'question', 'answer', 'category', 'chunk_id']
+                standard_headers = ['id', 'question', 'answer', 'context', 'category', 'chunk_id']
 
-            # Define key metadata fields for fine-tuning with standardized names
             key_metadata_fields = [
-                'page_number',
-                'generation_index',
-                'information_density',
-                'topic_coherence',
-                'complexity',
-                'validation_is_valid'
+                'page_number', 'generation_index', 'information_density',
+                'topic_coherence', 'complexity', 'validation_is_valid'
             ]
 
-            # Determine which metadata fields are available by sampling questions
             metadata_direct_headers = []
             if questions:
-                # Check for metadata in first few questions to determine available fields
                 sample_size = min(10, len(questions))
                 for q in questions[:sample_size]:
                     metadata = q.get('metadata', {})
-
-                    # Check direct metadata fields
                     for field in key_metadata_fields:
                         if field in metadata and field not in metadata_direct_headers:
                             metadata_direct_headers.append(field)
-
-                    # Check for nested metadata fields
                     for field in ['validation', 'analysis']:
                         if field in metadata and isinstance(metadata[field], dict):
                             for nested_field, value in metadata[field].items():
-                                # Only add simple type fields (not complex nested structures)
                                 if isinstance(value, (str, int, float,
                                                       bool)) and f"{field}_{nested_field}" not in metadata_direct_headers:
                                     metadata_direct_headers.append(f"{field}_{nested_field}")
-
-                    # Check for key_concepts as a special case
                     if 'key_concepts' in metadata and isinstance(metadata['key_concepts'], list):
-                        # Add as a single field with comma-separated values
                         if 'key_concepts' not in metadata_direct_headers:
                             metadata_direct_headers.append('key_concepts')
-
-                    # Add page position fields if available
                     if 'position_info' in metadata and isinstance(metadata['position_info'], dict):
                         for pos_field, value in metadata['position_info'].items():
                             pos_field_name = f"position_{pos_field}"
                             if pos_field_name not in metadata_direct_headers:
                                 metadata_direct_headers.append(pos_field_name)
 
-            # Include the full metadata JSON for completeness
             metadata_headers = ['metadata_json']
-
-            # Add document info headers if configured
-            doc_headers = []
-            if self.include_doc_info:
-                # Flatten document info keys
-                doc_headers = [f"document_{key}" for key in document_info.keys()]
-
-            # Combine all headers
+            doc_headers = [f"document_{key}" for key in document_info.keys()] if self.include_doc_info else []
             all_headers = standard_headers + metadata_direct_headers + metadata_headers + doc_headers
 
             rows = []
             for q in questions:
-                if not isinstance(q, dict): continue  # Skip invalid entries
+                if not isinstance(q, dict): continue
 
-                # Get question and answer text with fallbacks
                 question_text = q.get('text', q.get('question', ''))
                 answer_text = q.get('answer', '')
-
-                # Process metadata to ensure fields are standardized
                 metadata = self._process_metadata(q.get('metadata', {}))
 
-                # Map fields based on the selected fine-tuning format
                 if fine_tuning_format == 'openai_legacy':
                     row_data = {
-                        'id': q.get('id', ''),
-                        'prompt': question_text,
-                        'completion': answer_text,
-                        'category': q.get('category', ''),
+                        'id': q.get('id', ''), 'prompt': question_text, 'completion': answer_text,
+                        'context': q.get('context', ''), 'category': q.get('category', ''),
                         'chunk_id': q.get('chunk_id', '')
                     }
                 elif fine_tuning_format == 'standard':
                     row_data = {
-                        'id': q.get('id', ''),
-                        'input': question_text,
-                        'output': answer_text,
-                        'category': q.get('category', ''),
+                        'id': q.get('id', ''), 'input': question_text, 'output': answer_text,
+                        'context': q.get('context', ''), 'category': q.get('category', ''),
                         'chunk_id': q.get('chunk_id', '')
                     }
                 else:
-                    # Default mapping
                     row_data = {
-                        'id': q.get('id', ''),
-                        'question': question_text,
-                        'answer': answer_text,
-                        'category': q.get('category', ''),
+                        'id': q.get('id', ''), 'question': question_text, 'answer': answer_text,
+                        'context': q.get('context', ''), 'category': q.get('category', ''),
                         'chunk_id': q.get('chunk_id', '')
                     }
 
-                # Process direct metadata fields
                 for field in metadata_direct_headers:
                     if '_' in field and field.split('_', 1)[0] in ['validation', 'analysis']:
-                        # Handle nested fields
                         top_level, nested_field = field.split('_', 1)
                         if top_level in metadata and isinstance(metadata[top_level], dict):
                             row_data[field] = metadata[top_level].get(nested_field, '')
                     elif field == 'key_concepts' and field in metadata and isinstance(metadata[field], list):
-                        # Join list of concepts with commas
                         row_data[field] = ', '.join(str(concept) for concept in metadata[field])
                     elif field.startswith('position_') and 'position_info' in metadata:
-                        # Handle position info fields
-                        pos_field = field[9:]  # Remove 'position_' prefix
+                        pos_field = field[9:]
                         if isinstance(metadata['position_info'], dict) and pos_field in metadata['position_info']:
                             pos_value = metadata['position_info'][pos_field]
-                            if isinstance(pos_value, dict):
-                                # Convert position dict to string representation
-                                row_data[field] = json.dumps(pos_value)
-                            else:
-                                row_data[field] = str(pos_value)
+                            row_data[field] = json.dumps(pos_value) if isinstance(pos_value, dict) else str(pos_value)
                     elif field in metadata:
-                        # Regular top-level fields
                         row_data[field] = metadata.get(field, '')
 
-                # Serialize full metadata to JSON
                 try:
                     metadata_json = json.dumps(metadata) if metadata else ""
                 except TypeError:
-                    metadata_json = json.dumps({"error": "cannot serialize metadata"})  # Fallback
+                    metadata_json = json.dumps({"error": "cannot serialize metadata"})
                 row_data['metadata_json'] = metadata_json
 
-                # Add document info if configured
                 if self.include_doc_info:
                     for key, value in document_info.items():
                         doc_key = f"document_{key}"
-                        # Ensure value is string representable for CSV
                         row_data[doc_key] = str(value) if value is not None else ""
 
-                # Build row list in header order
                 row = [row_data.get(h, '') for h in all_headers]
                 rows.append(row)
 
-            # Return structured data for saving
-            return {
-                'headers': all_headers,
-                'rows': rows,
-                # Pass stats through, saving handles writing separately
-                'statistics': statistics
-            }
+            return {'headers': all_headers, 'rows': rows, 'statistics': statistics}
 
         except Exception as e:
             self.logger.error(f"Internal error formatting data for CSV: {e}", exc_info=True)

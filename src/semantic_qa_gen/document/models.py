@@ -128,6 +128,8 @@ class Question(BaseModel):
     text: str = Field(validation_alias=AliasChoices('text', 'question'))
     answer: str
     chunk_id: str
+    context: str = Field(...,
+                         description="The original chunk of text from which the question and answer were generated.")
     # Consider using Literal['factual', 'inferential', 'conceptual'] or an Enum for category
     category: str
     metadata: Dict[str, Any] = Field(default_factory=dict)

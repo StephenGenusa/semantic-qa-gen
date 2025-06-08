@@ -35,8 +35,21 @@ class JSONLAdapter(FormatAdapter):
     def format(self, questions: List[Dict[str, Any]],
                document_info: Dict[str, Any],
                statistics: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Format for JSONL with proper field mapping for AI fine-tuning.
+        """Formats questions for JSONL with field mapping for AI fine-tuning.
+
+        Each question, now including its source context, is prepared as a dictionary
+        to be written as a single line in the JSONL file.
+
+        Args:
+            questions: List of question dictionaries.
+            document_info: Ignored by JSONL format.
+            statistics: Ignored by JSONL format.
+
+        Returns:
+            A list of formatted question dictionaries.
+
+        Raises:
+            OutputError: If formatting the data fails.
         """
         try:
             # Get fine-tuning format from config
@@ -51,6 +64,7 @@ class JSONLAdapter(FormatAdapter):
                 # Get the question and answer text
                 question_text = q.get('text', q.get('question', ''))
                 answer_text = q.get('answer', '')
+                source_context = q.get('context', '')
 
                 # Create a copy of the original record for modification
                 record = q.copy()
@@ -64,9 +78,8 @@ class JSONLAdapter(FormatAdapter):
                             {"role": "assistant", "content": answer_text}
                         ]
                     }
-                    # Add metadata as a separate field
+                    record['context'] = source_context
                     if 'metadata' in q:
-                        # Process metadata to standardize fields and ensure source is basename
                         record['metadata'] = self._process_metadata(q['metadata'])
 
                 elif fine_tuning_format == 'openai_legacy':
@@ -75,31 +88,24 @@ class JSONLAdapter(FormatAdapter):
                         "prompt": question_text,
                         "completion": answer_text
                     }
-                    # Add metadata as a separate field
+                    record['context'] = source_context
                     if 'metadata' in q:
-                        # Process metadata to standardize fields and ensure source is basename
                         record['metadata'] = self._process_metadata(q['metadata'])
 
                 elif fine_tuning_format == 'standard':
-                    # Common standard format
+                    # Common standard format - context is already included via q.copy()
                     record = {
                         "input": question_text,
                         "output": answer_text,
                         **{k: v for k, v in q.items() if k not in ['text', 'question', 'answer']}
                     }
-
-                    # Process metadata if it exists
                     if 'metadata' in record:
                         record['metadata'] = self._process_metadata(record['metadata'])
 
                 else:
-                    # Default: Keep original fields but ensure 'question' exists
+                    # Default: Keep original fields but ensure 'question' exists - context is already included
                     if 'text' in record and 'question' not in record:
-                        record['question'] = record['text']
-                        # Remove the old key to avoid duplication
-                        record.pop('text', None)
-
-                    # Process metadata if it exists
+                        record['question'] = record.pop('text')
                     if 'metadata' in record:
                         record['metadata'] = self._process_metadata(record['metadata'])
 

@@ -33,8 +33,18 @@ class JSONAdapter(FormatAdapter):
     def format(self, questions: List[Dict[str, Any]],
                document_info: Dict[str, Any],
                statistics: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Structure the data into a dictionary suitable for JSON serialization.
+        """Structures the data into a dictionary suitable for JSON serialization.
+
+        Args:
+            questions: A list of question dictionaries, now including the 'context' field.
+            document_info: Information about the source document.
+            statistics: Processing statistics.
+
+        Returns:
+            A dictionary structured for JSON output, including the source context in each question record.
+
+        Raises:
+            OutputError: If structuring the data fails.
         """
         try:
             # Get fine-tuning format preference
@@ -49,6 +59,8 @@ class JSONAdapter(FormatAdapter):
                 # Get the question and answer text
                 question_text = q.get('text', q.get('question', ''))
                 answer_text = q.get('answer', '')
+                # MODIFICATION: Get the context field
+                source_context = q.get('context', '')
 
                 # Create a copy of the original record for modification
                 record = q.copy()
@@ -62,9 +74,10 @@ class JSONAdapter(FormatAdapter):
                             {"role": "assistant", "content": answer_text}
                         ]
                     }
+                    # MODIFICATION: Explicitly add context for this format
+                    record['context'] = source_context
                     # Add metadata as a separate field
                     if 'metadata' in q:
-                        # Process metadata to ensure source uses basename and includes position data
                         record['metadata'] = self._process_metadata(q['metadata'])
 
                 elif fine_tuning_format == 'openai_legacy':
@@ -73,29 +86,27 @@ class JSONAdapter(FormatAdapter):
                         "prompt": question_text,
                         "completion": answer_text
                     }
+                    # MODIFICATION: Explicitly add context for this format
+                    record['context'] = source_context
                     # Add metadata as a separate field
                     if 'metadata' in q:
-                        # Process metadata to ensure source uses basename and includes position data
                         record['metadata'] = self._process_metadata(q['metadata'])
 
                 elif fine_tuning_format == 'standard':
-                    # Common standard format
+                    # Common standard format - context is already included via q.copy()
                     record = {
                         "input": question_text,
                         "output": answer_text,
                         # Keep other fields except text/question/answer
                         **{k: v for k, v in q.items() if k not in ['text', 'question', 'answer']}
                     }
-                    # Process metadata if it exists
                     if 'metadata' in record:
                         record['metadata'] = self._process_metadata(record['metadata'])
 
                 else:
-                    # Default: Keep original fields but standardize naming
+                    # Default: Keep original fields but standardize naming - context is already included
                     if 'text' in record:
                         record['question'] = record.pop('text')
-
-                    # Process metadata if it exists
                     if 'metadata' in record:
                         record['metadata'] = self._process_metadata(record['metadata'])
 
@@ -116,13 +127,13 @@ class JSONAdapter(FormatAdapter):
                 output["generation_metadata"] = {
                     "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "generator": "SemanticQAGen",
-                    "format_version": "1.1",  # Example version bump
+                    "format_version": "1.2",
                     "fine_tuning_format": fine_tuning_format
                 }
 
             return output
 
-        except Exception as e:  # Catch unexpected errors during dict creation
+        except Exception as e:
             self.logger.error(f"Internal error formatting data for JSON: {e}", exc_info=True)
             raise OutputError(f"Failed to structure JSON output data: {str(e)}")
 
