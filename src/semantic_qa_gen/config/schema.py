@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Union, Any
 # Pydantic V2 imports
 from pydantic import (
     BaseModel, Field, field_validator, model_validator, ValidationInfo,
-    TypeAdapter
+    TypeAdapter, SecretStr
 )
 from pydantic_core import PydanticCustomError
 import warnings
@@ -147,7 +147,7 @@ class BaseLLMServiceDetails(BaseModel):  # Base class for shared fields
     enabled: bool = Field(True, description="Enable/disable this specific service (e.g., 'local' or 'remote').")
     model: str = Field(...,
                        description="Default model identifier used by this service (e.g., 'gpt-4', 'mistral:7b'). Tasks can override this.")
-    api_key: Optional[str] = Field(None, description="API key. Can use ${ENV_VAR} format for interpolation.",
+    api_key: Optional[SecretStr] = Field(None, description="API key. Can use ${ENV_VAR} format for interpolation.",
                                    validate_default=False)  # Don't validate default None
     timeout: int = Field(120, ge=1, description="Request timeout in seconds.")
     max_retries: int = Field(3, ge=0, description="Maximum retry attempts for transient errors.")

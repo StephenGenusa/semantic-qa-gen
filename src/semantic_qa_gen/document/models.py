@@ -72,7 +72,7 @@ class Document(BaseModel):
 class Chunk(BaseModel):
     """Represents a semantically coherent chunk of text derived from a Document."""
     content: str
-    id: str # Should generally be unique, consider default_factory if not always provided
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     document_id: str
     sequence: int
     context: Dict[str, Any] = Field(default_factory=dict)
@@ -93,7 +93,7 @@ class AnalysisResult(BaseModel):
     notes: Optional[str] = None
 
     # Optional: Add validator ensure the dictionary has the correct keys and non-negative values
-    @field_validator('estimated_question_yield')
+    @field_validator('estimated_question_yield', mode='before')
     def check_yield_format(cls, v):
         if not isinstance(v, dict):
             # Log warning or error - returning default for robustness
@@ -152,10 +152,3 @@ class ValidationResult(BaseModel):
         score_str = ", ".join(f"{k}={v:.2f}" for k, v in self.scores.items())
         reason_str = f": {'; '.join(self.reasons)}" if self.reasons else ""
         return f"Q:{self.question_id} -> {status} (Scores: [{score_str}]{reason_str})"
-
-# Optional: If you encounter issues with forward references ('Section' in Document/Chunk),
-# uncomment these lines after all models are defined. Usually not needed in Pydantic V2
-# for simple string type hints.
-# Document.model_rebuild()
-# Chunk.model_rebuild()
-

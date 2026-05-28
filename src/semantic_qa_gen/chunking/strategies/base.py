@@ -4,8 +4,6 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import re
 from semantic_qa_gen.document.models import Document, Section, Chunk
-from semantic_qa_gen.utils.error import ChunkingError
-
 
 class BaseChunkingStrategy(ABC):
     """

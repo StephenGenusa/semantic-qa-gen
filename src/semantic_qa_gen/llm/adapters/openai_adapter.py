@@ -7,6 +7,7 @@ import asyncio
 import logging
 import time
 import sys
+import random
 from typing import Dict, List, Optional, Any, Union, Tuple
 
 import httpx
@@ -38,6 +39,7 @@ from semantic_qa_gen.llm.prompts.manager import PromptManager
 from semantic_qa_gen.utils.error import LLMServiceError, ConfigurationError
 
 
+
 class OpenAIAdapter(BaseLLMAdapter):
     """
     LLM service adapter for OpenAI and compatible APIs (like Azure OpenAI, OpenRouter).
@@ -58,7 +60,12 @@ class OpenAIAdapter(BaseLLMAdapter):
         """
         super().__init__(service_config, prompt_manager)
 
-        self.api_key = service_config.get('api_key')
+        logging.getLogger("semantic_qa_gen.llm.adapters.base.OpenAIAdapter").setLevel(logging.ERROR)
+        raw_key = service_config.get('api_key')
+        if hasattr(raw_key, 'get_secret_value'):
+            raw_key = raw_key.get_secret_value()
+        self.api_key = raw_key or None
+
         self.provider = service_config.get('provider', 'openai').lower()
         self.organization = service_config.get('organization')
         self.api_version = service_config.get('api_version')  # Used for Azure
@@ -115,6 +122,7 @@ class OpenAIAdapter(BaseLLMAdapter):
 
         # Client initialization is deferred to _get_client
         self._client: Optional[httpx.AsyncClient] = None
+        self._client_lock = asyncio.Lock()
 
         # Rate limiting implementation
         self._rate_limit_config = {
@@ -132,7 +140,15 @@ class OpenAIAdapter(BaseLLMAdapter):
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Initializes or returns the httpx client with appropriate auth."""
-        if self._client is None:
+        # Fast path: client already initialized
+        if self._client is not None:
+            return self._client
+
+        # Slow path: acquire lock and double-check
+        async with self._client_lock:
+            if self._client is not None:
+                return self._client
+
             headers = {"Content-Type": "application/json"}
 
             # Determine if this is likely a local service that doesn't need auth
@@ -144,23 +160,19 @@ class OpenAIAdapter(BaseLLMAdapter):
 
             # Handle different authentication methods
             if self.provider == 'azure':
-                # Azure always needs its key in headers
                 if self.api_key:
                     headers["api-key"] = self.api_key
             elif self.api_key and not is_local_service:
-                # For OpenAI and other services that use Bearer auth
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            # Only warn about missing auth for non-local services
             if not is_local_service and not self.api_key and not self.use_azure_ad:
                 self.logger.warning(
                     "No authentication method configured for non-local service. Requests will likely fail.")
 
-            # Add organization header for OpenAI if provided
             if self.organization and self.provider == 'openai':
                 headers["OpenAI-Organization"] = self.organization
 
-            connect_timeout = max(10.0, self.timeout / 3)  # Min 10s connect
+            connect_timeout = max(10.0, self.timeout / 3)
             read_timeout = self.timeout
             write_timeout = self.timeout
 
@@ -171,7 +183,7 @@ class OpenAIAdapter(BaseLLMAdapter):
                 follow_redirects=True,
             )
             self.logger.info(f"Initialized httpx client for {self.provider} at {self.api_base}")
-        return self._client
+            return self._client
 
     async def _get_azure_ad_token(self) -> str:
         """
@@ -573,72 +585,84 @@ class OpenAIAdapter(BaseLLMAdapter):
             return  # Rate limiting disabled
 
         window_size = self._rate_limit_config['window_size']
-        now = time.monotonic()
 
-        async with self._rate_limit_lock:
-            # 1. Check token-based rate limit
-            if token_limit > 0:
-                # Remove expired entries
-                self._token_usage_window = [(ts, count) for ts, count in self._token_usage_window
-                                            if now - ts <= window_size]
+        while True:
+            now = time.monotonic()
+            wait_time = 0.0
+            token_exceeded = False
+            request_exceeded = False
+            current_token_usage = 0
 
-                # Calculate current token usage in the window
-                current_token_usage = sum(count for _, count in self._token_usage_window)
+            async with self._rate_limit_lock:
+                # 1. Check token-based rate limit
+                if token_limit > 0:
+                    # Remove expired entries
+                    self._token_usage_window = [(ts, count) for ts, count in self._token_usage_window
+                                                if now - ts <= window_size]
 
-                # Check if adding estimated_tokens would exceed the limit
-                if current_token_usage + estimated_tokens > token_limit:
-                    # Calculate how long to wait
-                    if self._token_usage_window:
-                        oldest_timestamp = min(ts for ts, _ in self._token_usage_window)
-                        # Wait until the oldest entry expires from the window
-                        wait_time = oldest_timestamp + window_size - now
+                    # Calculate current token usage in the window
+                    current_token_usage = sum(count for _, count in self._token_usage_window)
 
-                        # Add a bit of jitter (0-10% of wait time)
-                        import random
-                        jitter = random.uniform(0, 0.1 * wait_time)
-                        wait_time += jitter
+                    # Check if adding estimated_tokens would exceed the limit
+                    if current_token_usage + estimated_tokens > token_limit:
+                        token_exceeded = True
+                        # Calculate how long to wait
+                        if self._token_usage_window:
+                            oldest_timestamp = min(ts for ts, _ in self._token_usage_window)
+                            # Wait until the oldest entry expires from the window
+                            needed_wait = oldest_timestamp + window_size - now
+                            if needed_wait > wait_time:
+                                wait_time = needed_wait
+                        else:
+                            # Edge case: over limit but no history (e.g. single huge request)
+                            # Wait a bit before retrying
+                            needed_wait = 1.0
+                            if needed_wait > wait_time:
+                                wait_time = needed_wait
 
-                        self.logger.warning(
-                            f"Token rate limit ({token_limit}/min) would be exceeded "
-                            f"(current: {current_token_usage}, adding: {estimated_tokens}). "
-                            f"Waiting {wait_time:.2f}s."
-                        )
+                # 2. Check request-based rate limit
+                if request_limit > 0:
+                    # Remove expired timestamps
+                    self._request_timestamps = [ts for ts in self._request_timestamps if now - ts <= window_size]
 
-                        # Sleep outside the lock to avoid blocking other tasks
-                        await asyncio.sleep(wait_time)
-                        # Recursive call to check again after waiting
-                        # Release lock first to avoid deadlock
-                        await self._enforce_rate_limits(estimated_tokens)
-                        return
+                    # Check if adding a request would exceed the limit
+                    if len(self._request_timestamps) >= request_limit:
+                        request_exceeded = True
+                        # Calculate how long to wait
+                        if self._request_timestamps:
+                            oldest_timestamp = min(self._request_timestamps)
+                            # Wait until the oldest timestamp expires from the window
+                            needed_wait = oldest_timestamp + window_size - now
+                            if needed_wait > wait_time:
+                                wait_time = needed_wait
+                        else:
+                            # Edge case
+                            needed_wait = 1.0
+                            if needed_wait > wait_time:
+                                wait_time = needed_wait
 
-            # 2. Check request-based rate limit
-            if request_limit > 0:
-                # Remove expired timestamps
-                self._request_timestamps = [ts for ts in self._request_timestamps if now - ts <= window_size]
+                # If no limits exceeded, record the request and break
+                if not token_exceeded and not request_exceeded:
+                    # Add current request timestamp
+                    if request_limit > 0:
+                        self._request_timestamps.append(now)
+                    break  # Exit the while loop
 
-                # Check if adding a request would exceed the limit
-                if len(self._request_timestamps) >= request_limit:
-                    # Calculate how long to wait
-                    if self._request_timestamps:
-                        oldest_timestamp = min(self._request_timestamps)
-                        # Wait until the oldest timestamp expires from the window
-                        wait_time = oldest_timestamp + window_size - now
+            # Add a bit of jitter (0-10% of wait time) before sleeping
+            jitter = random.uniform(0, 0.1 * wait_time) if wait_time > 0 else 0
+            total_wait = wait_time + jitter
 
-                        # Add a bit of jitter
-                        import random
-                        jitter = random.uniform(0, 0.1 * wait_time)
-                        wait_time += jitter
+            # Sleep outside the lock to avoid blocking other tasks
+            if token_exceeded:
+                self.logger.warning(
+                    f"Token rate limit ({token_limit}/min) would be exceeded "
+                    f"(current: {current_token_usage}, adding: {estimated_tokens}). "
+                    f"Waiting {total_wait:.2f}s."
+                )
+            if request_exceeded:
+                self.logger.warning(
+                    f"Request rate limit ({request_limit}/min) would be exceeded. "
+                    f"Waiting {total_wait:.2f}s."
+                )
 
-                        self.logger.warning(
-                            f"Request rate limit ({request_limit}/min) would be exceeded. "
-                            f"Waiting {wait_time:.2f}s."
-                        )
-
-                        # Sleep outside the lock
-                        await asyncio.sleep(wait_time)
-                        # Recursive call to check again after waiting
-                        await self._enforce_rate_limits(estimated_tokens)
-                        return
-
-                # Add current request timestamp
-                self._request_timestamps.append(now)
+            await asyncio.sleep(total_wait)

@@ -27,7 +27,7 @@ except ImportError:
 from semantic_qa_gen import SemanticQAGen, __version__
 from semantic_qa_gen.utils.error import SemanticQAGenError
 from semantic_qa_gen.utils.project import ProjectManager
-
+from semantic_qa_gen.config.manager import ConfigManager
 
 def print_rich_info(title: str, data: Dict[str, Any]) -> None:
     """
@@ -145,8 +145,8 @@ def interactive_config() -> Dict[str, Any]:
         remote_config = {}
         remote_config["provider"] = Prompt.ask(
             "Provider",
-            choices=["openai", "azure", "anthropic", "other"],
-            default="openai"
+            choices=["openai", "azure", "anthropic", "openrouter"],
+            default="openrouter"
         )
 
         # For Azure, ask for Azure-specific settings
@@ -181,8 +181,8 @@ def interactive_config() -> Dict[str, Any]:
                 model_choices = ["claude-3-opus", "claude-3-sonnet", "claude-2.1"]
                 default_model = "claude-3-sonnet"
             else:
-                model_choices = None
-                default_model = ""
+                model_choices = ["z-ai/glm-5.1"]
+                default_model = "z-ai/glm-5.1"
 
             remote_config["model"] = Prompt.ask(
                 "Model name",
@@ -369,11 +369,12 @@ def parse_arguments() -> argparse.Namespace:
 
     # Init config command
     config_parser = subparsers.add_parser('init-config', help='Create a default configuration file')
-    config_parser.add_argument('output', help='Path for the config file')
+    config_parser.add_argument('output', nargs='?',
+                               help='Path for the config file. If omitted, defaults to '
+                                    '<project>/config/system.yaml when --project is given.')
     config_parser.add_argument('-i', '--interactive', action='store_true',
                                help='Create config interactively')
     config_parser.add_argument('-p', '--project', help='Path to QAGenProject directory')
-
     # Interactive config command
     subparsers.add_parser('interactive', help='Run in interactive mode')
 
@@ -434,6 +435,17 @@ def list_supported_formats() -> None:
         print("  - PDF: requires pymupdf")
         print("  - DOCX: requires python-docx")
 
+def _create_project_dirs_only(project_manager: 'ProjectManager', project_dir: str) -> None:
+    """Create the project directory layout WITHOUT writing a default system.yaml.
+
+    This is what we want from init-config: the project structure should exist
+    so logs/checkpoints/input/output have homes, but the config file itself
+    is the responsibility of the caller (init-config writes it).
+    """
+    import os
+    os.makedirs(project_dir, exist_ok=True)
+    for subdir in project_manager.DIRECTORIES:
+        os.makedirs(os.path.join(project_dir, subdir), exist_ok=True)
 
 def main() -> int:
     """
@@ -616,63 +628,118 @@ def main() -> int:
                 return 1
 
         elif action == "config":
-            # Interactive config
             config = interactive_config()
             if config:
                 output = Prompt.ask("Config filename", default="system.yaml")
                 config_path = os.path.join(project_path, "config", output)
                 try:
-                    qa_gen = SemanticQAGen(config_dict=config, project_path=project_path)
-                    qa_gen.create_default_config_file(config_path)
+                    # Write the file directly via ConfigManager — don't spin up
+                    # a SemanticQAGen instance just to save YAML.
+                    cm = ConfigManager(config_dict=config)
+                    cm.save_config(config_path, include_comments=True)
                     console.print(f"[green]Configuration saved to:[/green] {config_path}")
                 except Exception as e:
                     console.print(f"[bold red]Error:[/bold red] {str(e)}")
                     return 1
-
         elif action == "info":
             display_system_info()
-
-        return 0
+            return 0
 
     # Init config command
     if args.command == 'init-config':
         try:
-            # Determine project path
-            project_path = args.project
-            if not project_path:
-                # Try to find existing project
-                project_manager = ProjectManager()
-                detected_project = project_manager.find_project_root()
-                if detected_project:
-                    project_path = detected_project
-
-            if args.interactive and RICH_AVAILABLE:
-                # Interactive config creation
-                config = interactive_config()
-                qa_gen = SemanticQAGen(config_dict=config, project_path=project_path)
-                qa_gen.create_default_config_file(args.output)
-
-                if console:
-                    console.print(f"[green]Configuration created at:[/green] {args.output}")
-                else:
-                    print(f"Configuration created at: {args.output}")
+            # Figure out where the config file should land.
+            if args.output:
+                output_path = os.path.abspath(args.output)
+                # Track whether we should also scaffold a project.
+                scaffold_project_dir = None
+            elif args.project:
+                project_dir = os.path.abspath(args.project)
+                output_path = os.path.join(project_dir, "config", "system.yaml")
+                scaffold_project_dir = project_dir
             else:
-                # Default config creation
-                qa_gen = SemanticQAGen(project_path=project_path)
-                qa_gen.create_default_config_file(args.output)
-
+                msg = ("init-config needs either an output path or a --project. "
+                       "Examples:\n"
+                       "  init-config ./my-config.yaml\n"
+                       "  init-config -p ./QA2\n"
+                       "  init-config -p ./QA2 ./QA2/config/custom.yaml")
                 if console:
-                    console.print(f"[green]Default configuration created at:[/green] {args.output}")
+                    console.print(f"[bold red]Error:[/bold red] {msg}")
                 else:
-                    print(f"Default configuration created at: {args.output}")
+                    print(f"Error: {msg}")
+                return 1
+
+            # Refuse to clobber an existing file silently. Check BEFORE any
+            # scaffolding so we don't get confused by a config the scaffold
+            # itself just wrote.
+            if os.path.exists(output_path):
+                msg = f"Config file already exists: {output_path}"
+                if console:
+                    console.print(f"[bold red]Error:[/bold red] {msg}")
+                    console.print("Remove it or choose a different path.")
+                else:
+                    print(f"Error: {msg}")
+                    print("Remove it or choose a different path.")
+                return 1
+
+            # If -p was given, lay down the project directory structure now,
+            # but suppress the scaffold's default system.yaml write — we're
+            # about to write the config ourselves with the right content.
+            if scaffold_project_dir is not None:
+                project_manager = ProjectManager()
+                if not project_manager._is_project_directory(scaffold_project_dir):
+                    _create_project_dirs_only(project_manager, scaffold_project_dir)
+
+            # Make sure the destination directory exists (covers the no-`-p` case).
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+            # Build a ConfigManager directly — no SemanticQAGen instance needed.
+            if args.interactive and RICH_AVAILABLE:
+                user_config = interactive_config()
+                if not user_config:
+                    return 1
+                config_manager = ConfigManager(config_dict=user_config)
+                source_desc = "from interactive input"
+                config_manager.save_config(output_path, include_comments=True)
+            else:
+                config_manager = ConfigManager()
+                source_desc = "with default values"
+                config_manager.create_default_config_file(output_path, include_comments=True)
+
+            if console:
+                console.print(
+                    f"[green]Configuration created {source_desc} at:[/green] {output_path}"
+                )
+            else:
+                print(f"Configuration created {source_desc} at: {output_path}")
             return 0
+
         except SemanticQAGenError as e:
             if console:
                 console.print(f"[bold red]Error:[/bold red] {e}")
             else:
                 print(f"Error: {e}")
             return 1
+        except Exception as e:
+            if console:
+                console.print(f"[bold red]Unexpected error:[/bold red] {e}")
+            else:
+                print(f"Unexpected error: {e}")
+            return 1
 
+
+        except SemanticQAGenError as e:
+            if console:
+                console.print(f"[bold red]Error:[/bold red] {e}")
+            else:
+                print(f"Error: {e}")
+            return 1
+        except Exception as e:
+            if console:
+                console.print(f"[bold red]Unexpected error:[/bold red] {e}")
+            else:
+                print(f"Unexpected error: {e}")
+            return 1
     # Process command
     if args.command == 'process':
         try:

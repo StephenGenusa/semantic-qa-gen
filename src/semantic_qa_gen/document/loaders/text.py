@@ -70,7 +70,9 @@ class TextLoader(BaseLoader):
             True if this is a text file, False otherwise.
         """
         _, ext = os.path.splitext(file_path.lower())
-        return ext in ['.txt', '.text']
+        return ext in {'.txt', '.text', '.log', '.md', '.markdown',
+                       '.yaml', '.yml', '.ini', '.cfg', '.conf',
+                       '.json', '.csv', '.tsv', ''}
     
     def extract_metadata(self, path: str) -> DocumentMetadata:
         """

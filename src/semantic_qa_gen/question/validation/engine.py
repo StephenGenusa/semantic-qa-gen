@@ -21,6 +21,11 @@ from semantic_qa_gen.llm.prompts.manager import PromptManager
 from semantic_qa_gen.utils.error import ValidationError, LLMServiceError, ConfigurationError
 
 
+# Dimension keys expected in the LLM validation response. Centralized so the
+# parser and any future consumer agree on the contract.
+_VALIDATION_DIMENSIONS = ("factual_accuracy", "answer_completeness", "question_clarity")
+
+
 class ValidationEngine:
     """
     Coordinates multiple validators efficiently for question validation.
@@ -116,7 +121,15 @@ class ValidationEngine:
 
     def _parse_validation_response(self, response_text: str, expected_json: bool, question_id: str) -> Dict[str, Any]:
         """
-        Parses the LLM validation response, expecting a dictionary.
+        Parses the LLM validation response, expecting the per-dimension nested
+        shape produced by the question_validation prompt:
+
+            {
+              "factual_accuracy":     {"score": float, "reason": str},
+              "answer_completeness":  {"score": float, "reason": str},
+              "question_clarity":     {"score": float, "reason": str},
+              "suggested_improvements": str | null
+            }
 
         Args:
             response_text: Raw response string.
@@ -124,10 +137,12 @@ class ValidationEngine:
             question_id: ID for logging.
 
         Returns:
-            Parsed dictionary.
+            Parsed and normalized dictionary with the nested-dimension shape.
+            Each dimension is a dict with float 'score' and optional str 'reason'.
 
         Raises:
-            ValidationError: If parsing fails or result is not a dictionary.
+            ValidationError: If parsing fails, the result is not a dict, or
+                the required dimension structure is missing.
         """
         response_text = response_text.strip()
         if not response_text: raise ValidationError(f"LLM returned empty validation response for Q:{question_id}.")
@@ -148,43 +163,101 @@ class ValidationEngine:
                  if isinstance(parsed_yaml, dict): parsed_data = parsed_yaml; source = source + "+yaml" if source != "unknown" else "yaml"
             except (ImportError, yaml.YAMLError): pass
         if parsed_data is None or not isinstance(parsed_data, dict): raise ValidationError(f"Could not parse validation dictionary for Q:{question_id}.", {"preview": response_text[:200]})
-        # Clean data
-        parsed_data['is_valid'] = str(parsed_data.get('is_valid')).lower() == 'true'
-        for key in ['factual_accuracy', 'answer_completeness', 'question_clarity']:
-            try: parsed_data[key] = float(parsed_data.get(key))
-            except (ValueError, TypeError, SystemError): parsed_data[key] = 0.0
-        reasons = parsed_data.get('reasons', []); parsed_data['reasons'] = [str(r) for r in reasons] if isinstance(reasons, list) else ([str(reasons)] if reasons else [])
-        suggestions = parsed_data.get('suggested_improvements'); parsed_data['suggested_improvements'] = str(suggestions).strip() if suggestions else None
+
+        # Shape check: each dimension must be present and must be a dict containing 'score'.
+        # No backward-compatibility path: the old flat shape ('factual_accuracy': 0.85)
+        # is rejected here rather than silently coerced, so a mismatch surfaces immediately.
+        missing = [d for d in _VALIDATION_DIMENSIONS if d not in parsed_data]
+        if missing:
+            raise ValidationError(
+                f"Validation response for Q:{question_id} missing required dimension(s): {missing}",
+                {"preview": response_text[:200]}
+            )
+        non_dict = [d for d in _VALIDATION_DIMENSIONS if not isinstance(parsed_data.get(d), dict)]
+        if non_dict:
+            raise ValidationError(
+                f"Validation response for Q:{question_id} has non-dict dimension(s) {non_dict}; "
+                f"expected per-dimension {{'score': float, 'reason': str}} structure.",
+                {"preview": response_text[:200]}
+            )
+
+        # Normalize each dimension: coerce score to float, reason to str (or None).
+        for dim in _VALIDATION_DIMENSIONS:
+            dim_data = parsed_data[dim]
+            try:
+                dim_data['score'] = float(dim_data.get('score'))
+            except (ValueError, TypeError, SystemError):
+                dim_data['score'] = 0.0
+            raw_reason = dim_data.get('reason')
+            dim_data['reason'] = str(raw_reason).strip() if raw_reason else None
+
+        # Normalize suggested_improvements (still emitted at top level by the prompt).
+        suggestions = parsed_data.get('suggested_improvements')
+        parsed_data['suggested_improvements'] = str(suggestions).strip() if suggestions else None
         return parsed_data
 
     async def validate_single_question(self,
-                                     question: Question,
-                                     chunk: Chunk,
-                                     shared_llm_data: Optional[Dict[str, Any]]) -> Dict[str, ValidationResult]:
-        """Run all enabled validators for a single question, using shared LLM data if provided."""
-        individual_results: Dict[str, ValidationResult] = {}; validation_tasks = []; enabled_validator_names = []
+                                       question: Question,
+                                       chunk: Chunk,
+                                       shared_llm_data: Optional[Dict[str, Any]]) -> Dict[str, ValidationResult]:
+        """
+        Run all enabled NON-DIVERSITY validators for a single question in parallel.
+
+        NOTE: The diversity validator is intentionally excluded here because it has
+        per-chunk state (cache of accepted question texts) and must be run sequentially
+        across questions to function correctly. Diversity is handled in a separate
+        sequential pass inside `validate_questions`.
+        """
+        individual_results: Dict[str, ValidationResult] = {}
+        validation_tasks = []
+        enabled_validator_names = []
+
         for name, validator in self.validators.items():
-            if not validator.is_enabled(): continue
+            if not validator.is_enabled():
+                continue
+            # Skip diversity here — it runs sequentially in validate_questions
+            if name == "diversity":
+                continue
+
             enabled_validator_names.append(name)
             is_llm_dep = name in self.llm_dependent_validators
             if is_llm_dep and shared_llm_data is None:
-                 individual_results[name] = ValidationResult(question_id=question.id, validator_name=name, is_valid=False, scores={}, reasons=["Shared LLM validation call failed"])
-                 continue
+                individual_results[name] = ValidationResult(
+                    question_id=question.id, validator_name=name, is_valid=False,
+                    scores={}, reasons=["Shared LLM validation call failed"]
+                )
+                continue
             llm_data = shared_llm_data if is_llm_dep else None
-            validation_tasks.append(asyncio.create_task(validator.validate(question, chunk, llm_data), name=f"validate_{question.id}_{name}"))
+            validation_tasks.append(
+                asyncio.create_task(
+                    validator.validate(question, chunk, llm_data),
+                    name=f"validate_{question.id}_{name}"
+                )
+            )
+
         if validation_tasks:
             name_map = {i: name for i, name in enumerate(enabled_validator_names) if name not in individual_results}
             results = await asyncio.gather(*validation_tasks, return_exceptions=True)
             for i, res_or_err in enumerate(results):
                 v_name = name_map.get(i)
-                if not v_name: self.logger.error(f"Mapping error index {i} for Q:{question.id}"); continue
-                if isinstance(res_or_err, ValidationResult): individual_results[v_name] = res_or_err
+                if not v_name:
+                    self.logger.error(f"Mapping error index {i} for Q:{question.id}")
+                    continue
+                if isinstance(res_or_err, ValidationResult):
+                    individual_results[v_name] = res_or_err
                 elif isinstance(res_or_err, Exception):
                     self.logger.error(f"Validator '{v_name}' failed Q:{question.id}: {res_or_err}")
-                    individual_results[v_name] = ValidationResult(question_id=question.id, validator_name=v_name, is_valid=False, scores={}, reasons=[f"Internal Validator Error: {str(res_or_err)}"])
+                    individual_results[v_name] = ValidationResult(
+                        question_id=question.id, validator_name=v_name, is_valid=False,
+                        scores={}, reasons=[f"Internal Validator Error: {str(res_or_err)}"]
+                    )
                 else:
                     self.logger.error(f"Validator '{v_name}' Q:{question.id} returned type {type(res_or_err)}")
-                    individual_results[v_name] = ValidationResult(question_id=question.id, validator_name=v_name, is_valid=False, scores={}, reasons=["Unexpected result type"])
+                    individual_results[v_name] = ValidationResult(
+                        question_id=question.id, validator_name=v_name, is_valid=False,
+                        scores={}, reasons=["Unexpected result type"]
+                    )
+
         return individual_results
 
     def _aggregate_validation_results(self,
@@ -200,21 +273,114 @@ class ValidationEngine:
         return {"question_id": question_id, "is_valid": overall_valid, "scores": scores, "reasons": reasons, "suggested_improvements": "\n".join(suggestions) if suggestions else None, "validation_results": individual_results}
 
     async def validate_questions(self, questions: List[Question],
-                               chunk: Chunk) -> Dict[str, Dict[str, Any]]:
-        """Validate multiple questions against a chunk, optimizing LLM calls."""
+                                 chunk: Chunk) -> Dict[str, Dict[str, Any]]:
+        """
+        Validate multiple questions against a chunk.
+
+        Two-phase design:
+        1. Run all non-diversity validators (factual_accuracy, answer_completeness,
+           question_clarity) concurrently across questions via gather.
+        2. Run diversity sequentially across questions, in input order, so its
+           per-chunk cache of accepted questions is built up correctly. Diversity
+           is cheap (no LLM call, just SequenceMatcher) so serialization is fine.
+        """
         final_results: Dict[str, Dict[str, Any]] = {}
-        needs_llm = any(self.validators.get(name) and self.validators[name].is_enabled() for name in self.llm_dependent_validators)
+
+        # Reset diversity validator state for this chunk before any work
         diversity_val = self.validators.get("diversity")
-        if isinstance(diversity_val, DiversityValidator) and diversity_val.is_enabled(): diversity_val.reset_for_chunk(chunk.id)
+        diversity_enabled = isinstance(diversity_val, DiversityValidator) and diversity_val.is_enabled()
+        if diversity_enabled:
+            diversity_val.reset_for_chunk(chunk.id)
+
+        needs_llm = any(
+            self.validators.get(name) and self.validators[name].is_enabled()
+            for name in self.llm_dependent_validators
+        )
+
+        # --- Phase 1: parallel non-diversity validation ---
+        # Each workflow does: shared LLM call → run non-diversity validators in parallel
         coros = [self._validate_question_workflow(q, chunk, needs_llm) for q in questions]
         results = await asyncio.gather(*coros, return_exceptions=True)
+
+        # Materialize phase-1 results into final_results and also keep the per-question
+        # individual_results dict so we can merge diversity into it in phase 2.
+        per_question_individual: Dict[str, Dict[str, ValidationResult]] = {}
         for i, res_or_err in enumerate(results):
             q_id = questions[i].id
             if isinstance(res_or_err, Exception):
-                 self.logger.error(f"Validation workflow failed Q_ID {q_id}: {res_or_err}")
-                 final_results[q_id] = {"question_id": q_id, "is_valid": False, "scores":{}, "reasons": [f"Workflow Error: {str(res_or_err)}"], "suggested_improvements": None, "validation_results": {}}
-            elif isinstance(res_or_err, dict): final_results[q_id] = res_or_err
-            else: self.logger.error(f"Unexpected workflow return type Q_ID {q_id}: {type(res_or_err)}"); final_results[q_id] = {"question_id": q_id, "is_valid": False, "scores":{}, "reasons": ["Workflow Error: Unexpected type"], "suggested_improvements": None, "validation_results": {}}
+                self.logger.error(f"Validation workflow failed Q_ID {q_id}: {res_or_err}")
+                final_results[q_id] = {
+                    "question_id": q_id, "is_valid": False, "scores": {},
+                    "reasons": [f"Workflow Error: {str(res_or_err)}"],
+                    "suggested_improvements": None, "validation_results": {}
+                }
+                per_question_individual[q_id] = {}
+            elif isinstance(res_or_err, dict):
+                final_results[q_id] = res_or_err
+                per_question_individual[q_id] = res_or_err.get("validation_results", {}) or {}
+            else:
+                self.logger.error(f"Unexpected workflow return type Q_ID {q_id}: {type(res_or_err)}")
+                final_results[q_id] = {
+                    "question_id": q_id, "is_valid": False, "scores": {},
+                    "reasons": ["Workflow Error: Unexpected type"],
+                    "suggested_improvements": None, "validation_results": {}
+                }
+                per_question_individual[q_id] = {}
+
+        # --- Phase 2: sequential diversity validation ---
+        if diversity_enabled:
+            for q in questions:
+                q_id = q.id
+                try:
+                    diversity_result = await diversity_val.validate(q, chunk, llm_validation_data=None)
+                except Exception as e:
+                    self.logger.error(f"Diversity validator failed Q_ID {q_id}: {e}")
+                    diversity_result = ValidationResult(
+                        question_id=q_id, validator_name="diversity", is_valid=False,
+                        scores={}, reasons=[f"Internal Validator Error: {str(e)}"]
+                    )
+
+                # Merge diversity into this question's individual_results and re-aggregate
+                individual = per_question_individual.get(q_id, {})
+                individual["diversity"] = diversity_result
+                per_question_individual[q_id] = individual
+
+                # Re-aggregate now that diversity is included
+                aggregated = self._aggregate_validation_results(q_id, individual)
+
+                # Preserve metadata that _validate_question_workflow set on the question;
+                # only update the aggregated verdict fields.
+                final_results[q_id] = aggregated
+
+                # Re-write the validation metadata on the Question object so it reflects
+                # the post-diversity verdict (mirrors what _validate_question_workflow does).
+                try:
+                    if not q.metadata:
+                        q.metadata = {}
+                    validation_metadata = {
+                        'validation_is_valid': aggregated['is_valid'],
+                        'validation_scores': aggregated['scores'],
+                        'validation_reasons': aggregated['reasons'],
+                    }
+                    if aggregated['suggested_improvements']:
+                        validation_metadata['validation_suggestions'] = aggregated['suggested_improvements']
+                    validator_details = {}
+                    for vname, vres in aggregated['validation_results'].items():
+                        if isinstance(vres, ValidationResult):
+                            validator_details[vname] = {
+                                'is_valid': vres.is_valid,
+                                'scores': vres.scores,
+                                'reasons': vres.reasons,
+                            }
+                    if validator_details:
+                        validation_metadata['validator_details'] = validator_details
+                    validation_metadata['validation_timestamp'] = datetime.datetime.now(
+                        datetime.timezone.utc).isoformat()
+                    q.metadata['validation'] = validation_metadata
+                except Exception as meta_err:
+                    self.logger.warning(
+                        f"Could not update validation metadata after diversity for Q:{q_id}: {meta_err}")
+
         return final_results
 
     async def _validate_question_workflow(self, question: Question, chunk: Chunk, needs_llm_call: bool) -> Dict[str, Any]:

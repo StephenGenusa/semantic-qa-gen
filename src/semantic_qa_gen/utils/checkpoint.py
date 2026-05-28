@@ -34,7 +34,6 @@ class CheckpointManager:
     # In semantic_qa_gen/utils/checkpoint.py - modify the __init__ method
 
     def __init__(self, config: SemanticQAGenConfig, checkpoint_dir: str):
-        print(f"Ho {checkpoint_dir}")
         """
         Initialize the checkpoint manager.
 
@@ -100,21 +99,16 @@ class CheckpointManager:
             checkpoint_filename = f"{base_filename}_{timestamp}.json"
             checkpoint_path = os.path.join(self.checkpoint_dir, checkpoint_filename)
 
-            # Convert Question objects to Pydantic-serializable dictionaries
+            # Convert Question objects to Pydantic V2 serializable dictionaries
             questions_data = []
             if all_questions_so_far:
-                # Use model_dump for potential Pydantic V2 Question model later
-                # For now, assumes Question is a dataclass/simple object
-                questions_data = [q.to_dict() for q in all_questions_so_far if hasattr(q, 'to_dict')]
-                # Fallback if no to_dict method - basic serialization might work
-                if not questions_data and all_questions_so_far:
-                     try:
-                          # Attempt naive serialization, might fail for complex types in metadata
-                          questions_data = [json.loads(json.dumps(q.__dict__, default=str)) for q in all_questions_so_far]
-                          self.logger.warning("Used fallback serialization for Question objects in checkpoint.")
-                     except Exception as serial_err:
-                          self.logger.error(f"Failed to serialize Question objects for checkpoint: {serial_err}")
-                          raise CheckpointError(f"Cannot serialize questions for checkpoint: {serial_err}")
+                try:
+                    # Use Pydantic V2 model_dump with JSON mode
+                    # This ensures complex types like datetime are properly serialized
+                    questions_data = [q.model_dump(mode='json') for q in all_questions_so_far]
+                except Exception as serial_err:
+                    self.logger.error(f"Failed to serialize Question objects: {serial_err}")
+                    raise CheckpointError(f"Cannot serialize questions for checkpoint: {serial_err}")
 
 
             # Prepare checkpoint data structure (using current version)
@@ -133,7 +127,7 @@ class CheckpointManager:
             temp_checkpoint_path = checkpoint_path + ".tmp"
             try:
                 with open(temp_checkpoint_path, 'w', encoding='utf-8') as f:
-                    # Use Pydantic's JSON capability if data was a model, else standard json
+                    # Dump the prepared dictionary to JSON
                     json.dump(checkpoint_data, f, indent=2)
 
                 # Atomically replace existing or create new
@@ -272,15 +266,12 @@ class CheckpointManager:
 
 
     def load_questions_from_data(self, questions_data: List[Dict[str, Any]]) -> List[Question]:
-        """Safely load Question objects from checkpoint data."""
+        """Safely load Question objects from checkpoint data using Pydantic V2 validation."""
         loaded_questions = []
         for i, q_data in enumerate(questions_data):
             try:
-                # Requires Question model to support instantiation from dict
-                # If Question uses Pydantic V2:
-                # loaded_questions.append(Question.model_validate(q_data))
-                # If Question is a dataclass:
-                loaded_questions.append(Question(**q_data))
+                # Use Pydantic V2 model_validate for robust instantiation and validation
+                loaded_questions.append(Question.model_validate(q_data))
             except (TypeError, ValidationError, KeyError) as q_load_err: # Catch common errors
                  self.logger.warning(f"Failed to load question data item {i} from checkpoint data: {q_load_err}. Data snippet: {str(q_data)[:100]}")
             except Exception as e:

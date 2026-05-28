@@ -38,9 +38,10 @@ from semantic_qa_gen.utils.progress import ProgressReporter, ProcessingStage
 class SemanticPipeline:
     """Orchestrates the end-to-end process of generating semantic Q&A pairs."""
 
-    def __init__(self, config_manager: ConfigManager):
+    def __init__(self, config_manager, prompts_dir: Optional[str] = None):
         """Initialize the semantic pipeline and its components."""
         self.config_manager = config_manager
+        self.prompts_dir = prompts_dir
         self.logger = logging.getLogger(__name__)
         self.performance_metrics: Dict[str, Any] = {"start_time": 0.0, "end_time": 0.0, "total_time": 0.0, "stage_times": {}}
         self.config: SemanticQAGenConfig
@@ -74,8 +75,38 @@ class SemanticPipeline:
         self.logger.debug("Initializing pipeline components...")
         self.document_processor = DocumentProcessor(self.config_manager)
         self.chunking_engine = ChunkingEngine(self.config_manager)
+
+        # Resolve where prompt templates live, in order of preference:
+        #   1. Explicit prompts_dir passed in by the caller.
+        #   2. Sibling 'prompts' dir next to the config file (if loaded from a file).
+        #   3. Bundled defaults inside the package.
+        prompts_dir = self.prompts_dir
+
+        if not prompts_dir:
+            cfg_path = getattr(self.config_manager, "config_path", None)
+            if cfg_path:
+                # Convention: <project>/config/system.yaml  ->  <project>/config/prompts
+                cfg_dir = os.path.dirname(os.path.abspath(cfg_path))
+                candidate = os.path.join(cfg_dir, "prompts")
+                if os.path.isdir(candidate):
+                    prompts_dir = candidate
+
+        if not prompts_dir:
+            # Final fallback: package-bundled prompts.
+            import semantic_qa_gen
+            pkg_dir = os.path.dirname(os.path.abspath(semantic_qa_gen.__file__))
+            bundled = os.path.join(pkg_dir, "llm", "prompts", "templates")
+            if os.path.isdir(bundled):
+                prompts_dir = bundled
+
+        if not prompts_dir:
+            raise SemanticQAGenError(
+                "Could not locate prompt templates. Pass prompts_dir explicitly or "
+                "ensure <project>/config/prompts exists."
+            )
+
         # Create PromptManager instance once - shared if needed
-        self.prompt_manager = PromptManager(os.path.join(os.path.dirname(self.config_manager.config_path), 'templates')) # TODO: Allow passing prompts_dir from config?
+        self.prompt_manager = PromptManager(prompts_dir)
         # Pass PromptManager to TaskRouter
         self.task_router = TaskRouter(self.config_manager, self.prompt_manager)
         # Initialize the SemanticAnalyzer, passing router and prompt manager
@@ -85,8 +116,22 @@ class SemanticPipeline:
         self.validation_engine = ValidationEngine(self.config_manager, self.task_router, self.prompt_manager)
         # Initialize the QuestionProcessor with generator and validator engine
         self.question_processor = QuestionProcessor(self.config_manager, self.question_generator, self.validation_engine)
+
+        # Resolve checkpoint directory. Prefer the config-declared path (per schema
+        # default './checkpoints'); only fall back to deriving from config_path if
+        # the config value is missing for some reason.
+        checkpoint_dir = getattr(self.config.processing, 'checkpoint_dir', None)
+        if not checkpoint_dir:
+            cfg_path = getattr(self.config_manager, "config_path", None)
+            if cfg_path:
+                checkpoint_dir = os.path.join(
+                    os.path.dirname(os.path.abspath(cfg_path)), 'checkpoints'
+                )
+            else:
+                checkpoint_dir = os.path.join(os.getcwd(), 'checkpoints')
+
         # CheckpointManager needs the full validated config object
-        self.checkpoint_manager = CheckpointManager(self.config, os.path.join(os.path.dirname(self.config_manager.config_path), 'checkpoints'))
+        self.checkpoint_manager = CheckpointManager(self.config, checkpoint_dir)
         # Get progress bar setting from config
         show_progress = getattr(self.config.processing, 'log_level', 'INFO') in ['INFO', 'DEBUG']
         self.progress_reporter = ProgressReporter(show_progress_bar=show_progress)
@@ -210,115 +255,168 @@ class SemanticPipeline:
             self.progress_reporter.update_stage(ProcessingStage.QUESTION_GENERATION)
             self.logger.info(f"Generating and validating questions for {num_to_process} chunks...")
 
-            # Loop through chunks to process one by one
-            current_chunk_abs_index = start_chunk_index
-            for i, chunk in enumerate(chunks_to_process):
-                chunk_id = chunk.id
-                self.logger.debug(f"Processing chunk {i+1}/{num_to_process} (Abs Index: {current_chunk_abs_index}, ID: {chunk_id}) for Q&A")
+            # Loop through chunks in batched waves of size `concurrency`.
+            # Each wave: dispatch N chunks via asyncio.gather, await all, then checkpoint.
+            # This preserves the invariant "all chunks before index X are done" for checkpointing.
+            concurrency = self.config.processing.concurrency
+            wave_size = max(1, concurrency)
 
-                # Get analysis result for this chunk
-                analysis = analyses.get(chunk_id)
-                if not analysis or (analysis.notes and "failed" in analysis.notes.lower()):
-                     self.logger.warning(f"Analysis result missing or indicates failure for chunk {chunk_id}. Skipping Q&A generation.")
-                     processed_count_in_run += 1
-                     overall_stats["processed_chunks"] = start_chunk_index + processed_count_in_run
-                     overall_stats["failed_qa_chunks"] += 1 # Count failure here too
+            async def process_single_chunk_for_qa(chunk: Chunk, abs_index: int) -> Tuple[str, List[Question], Dict[str, Any], Optional[str]]:
+                """Process one chunk: generate + validate questions.
 
-                     # Track failure
-                     self.failed_chunks[chunk_id] = {
-                         'content': chunk.content[:500] + "..." if len(chunk.content) > 500 else chunk.content,
-                         'errors': ["Analysis failed or missing before question generation"],
-                         'details': {
-                             'analysis_notes': getattr(analysis, 'notes', "No analysis available"),
-                             'stage': 'analysis'
-                         }
-                     }
+                Returns:
+                    (chunk_id, valid_questions, chunk_stats, skip_reason_or_None)
+                Catches all exceptions and reports them via chunk_stats; never raises.
+                """
+                chunk_id_local = chunk.id
+                analysis_local = analyses.get(chunk_id_local)
 
-                     self.progress_reporter.update_progress(processed_count_in_run, num_to_process, {"stage": "qa_skipped", "valid_qs": len(all_processed_questions)})
-                     current_chunk_abs_index += 1
-                     continue
-
-                # Process using the refactored QuestionProcessor
-                try:
-                    # QuestionProcessor handles generate -> validate internally for the chunk
-                    valid_questions_for_chunk, chunk_stats = await self.question_processor.process_chunk(
-                        chunk=chunk,
-                        analysis=analysis
+                # Skip chunks whose analysis failed
+                if not analysis_local or (analysis_local.notes and "failed" in analysis_local.notes.lower()):
+                    self.logger.warning(
+                        f"Analysis result missing or indicates failure for chunk {chunk_id_local}. Skipping Q&A generation."
                     )
-                    # Aggregate results
-                    all_processed_questions.extend(valid_questions_for_chunk)
-                    self._aggregate_stats(overall_stats, chunk_stats) # Merge chunk stats into overall
-                    overall_stats["chunk_details"][chunk_id] = chunk_stats # Store individual chunk results
+                    skip_stats = {
+                        "chunk_id": chunk_id_local,
+                        "generated_questions": 0,
+                        "validated_questions": 0,
+                        "valid_questions_final": 0,
+                        "rejected_questions": 0,
+                        "errors": ["Analysis failed or missing before question generation"],
+                        "categories": {},
+                    }
+                    return chunk_id_local, [], skip_stats, "analysis_failed"
 
-                    # Log chunk result and handle errors reported by processor
-                    if chunk_stats.get("errors"):
-                        self.logger.warning(f"Chunk {chunk_id} processed with errors: {chunk_stats['errors']}")
-                        overall_stats["failed_qa_chunks"] += 1 # Count as failed if errors occurred
+                try:
+                    self.logger.debug(
+                        f"Processing chunk (Abs Index: {abs_index}, ID: {chunk_id_local}) for Q&A"
+                    )
+                    valid_qs, c_stats = await self.question_processor.process_chunk(
+                        chunk=chunk,
+                        analysis=analysis_local
+                    )
+                    return chunk_id_local, valid_qs, c_stats, None
+                except Exception as e:
+                    err_msg = f"Unexpected error from QuestionProcessor for chunk {chunk_id_local}: {str(e)}"
+                    self.logger.exception(err_msg, exc_info=debug_mode)
+                    err_stats = {
+                        "chunk_id": chunk_id_local,
+                        "generated_questions": 0,
+                        "validated_questions": 0,
+                        "valid_questions_final": 0,
+                        "rejected_questions": 0,
+                        "errors": [err_msg],
+                        "categories": {},
+                        "_traceback": traceback.format_exc(),
+                    }
+                    return chunk_id_local, [], err_stats, "processor_crash"
 
-                        # Store detailed failure information
-                        self.failed_chunks[chunk_id] = {
-                            'content': chunk.content[:500] + "..." if len(chunk.content) > 500 else chunk.content,
-                            'errors': chunk_stats.get('errors', []),
+            processed_count_in_run = 0
+            total_processed_chunk_count = start_chunk_index  # running total
+
+            # Iterate in waves
+            for wave_start in range(0, num_to_process, wave_size):
+                wave_chunks = chunks_to_process[wave_start:wave_start + wave_size]
+                wave_abs_start = start_chunk_index + wave_start
+
+                self.logger.debug(
+                    f"Starting wave: chunks {wave_abs_start} to {wave_abs_start + len(wave_chunks) - 1} "
+                    f"({len(wave_chunks)} chunks in parallel, concurrency={concurrency})"
+                )
+
+                # Dispatch the wave concurrently
+                wave_tasks = [
+                    process_single_chunk_for_qa(c, wave_abs_start + idx)
+                    for idx, c in enumerate(wave_chunks)
+                ]
+                wave_results = await asyncio.gather(*wave_tasks)
+
+                # Aggregate results from this wave in submission order.
+                # asyncio.gather preserves input order regardless of completion order.
+                count_before_wave = processed_count_in_run
+                for (chunk_id_res, valid_qs_res, c_stats_res, skip_reason), source_chunk in zip(wave_results, wave_chunks):
+                    if skip_reason == "analysis_failed":
+                        overall_stats["failed_qa_chunks"] += 1
+                        self.failed_chunks[chunk_id_res] = {
+                            'content': source_chunk.content[:500] + "..." if len(source_chunk.content) > 500 else source_chunk.content,
+                            'errors': c_stats_res.get('errors', ["Analysis failed"]),
                             'details': {
-                                'analysis': analysis.model_dump() if hasattr(analysis, 'model_dump') else str(analysis),
-                                'stats': chunk_stats,
-                                'category_counts': chunk_stats.get('categories', {}),
-                                'stage': 'question_generation'
+                                'analysis_notes': getattr(analyses.get(chunk_id_res), 'notes', "No analysis available"),
+                                'stage': 'analysis'
                             }
                         }
-
-                except Exception as e:
-                    # Catch unexpected errors specifically from QuestionProcessor.process_chunk call
-                    error_message = f"Unexpected error from QuestionProcessor for chunk {chunk_id}: {str(e)}"
-                    self.logger.exception(error_message, exc_info=debug_mode)
-                    overall_stats["failed_qa_chunks"] += 1
-
-                    # Store failure details with traceback
-                    self.failed_chunks[chunk_id] = {
-                        'content': chunk.content[:500] + "..." if len(chunk.content) > 500 else chunk.content,
-                        'errors': [error_message],
-                        'details': {
-                            'traceback': traceback.format_exc(),
-                            'analysis_type': str(type(analysis)),
-                            'stage': 'question_processing'
+                    elif skip_reason == "processor_crash":
+                        overall_stats["failed_qa_chunks"] += 1
+                        self.failed_chunks[chunk_id_res] = {
+                            'content': source_chunk.content[:500] + "..." if len(source_chunk.content) > 500 else source_chunk.content,
+                            'errors': c_stats_res.get('errors', []),
+                            'details': {
+                                'traceback': c_stats_res.get('_traceback', ''),
+                                'analysis_type': str(type(analyses.get(chunk_id_res))),
+                                'stage': 'question_processing'
+                            }
                         }
-                    }
+                        # Aggregate the minimal error stats; _aggregate_stats will increment failed_qa_chunks
+                        # but we already incremented above for the crash, so use a minimal dict without 'errors'
+                        # to avoid double-counting. Actually we want the stats but not the increment - so just
+                        # update generation/validation totals manually.
+                        # Simpler: pass a stats dict without 'errors' to avoid double-count.
+                        crash_stats_no_errors = {k: v for k, v in c_stats_res.items() if k != 'errors'}
+                        self._aggregate_stats(overall_stats, crash_stats_no_errors)
+                    else:
+                        # Normal completion path
+                        all_processed_questions.extend(valid_qs_res)
+                        # _aggregate_stats increments failed_qa_chunks when c_stats_res['errors'] is non-empty
+                        self._aggregate_stats(overall_stats, c_stats_res)
+                        overall_stats["chunk_details"][chunk_id_res] = c_stats_res
 
-                    # Aggregate basic stats even on failure if possible
-                    self._aggregate_stats(overall_stats, {"chunk_id": chunk_id, "errors": [f"Processor Crash: {str(e)}"]})
-                    # Continue to next chunk
+                        if c_stats_res.get("errors"):
+                            self.logger.warning(f"Chunk {chunk_id_res} processed with errors: {c_stats_res['errors']}")
+                            # Note: _aggregate_stats already incremented failed_qa_chunks for this chunk
+                            analysis_for_failed = analyses.get(chunk_id_res)
+                            self.failed_chunks[chunk_id_res] = {
+                                'content': source_chunk.content[:500] + "..." if len(source_chunk.content) > 500 else source_chunk.content,
+                                'errors': c_stats_res.get('errors', []),
+                                'details': {
+                                    'analysis': analysis_for_failed.model_dump() if hasattr(analysis_for_failed, 'model_dump') else str(analysis_for_failed),
+                                    'stats': c_stats_res,
+                                    'category_counts': c_stats_res.get('categories', {}),
+                                    'stage': 'question_generation'
+                                }
+                            }
 
-                # Update progress after each chunk
-                processed_count_in_run += 1
-                overall_stats["processed_chunks"] = start_chunk_index + processed_count_in_run
+                    processed_count_in_run += 1
+
+                # Update progress and counters after the whole wave completes
+                total_processed_chunk_count = start_chunk_index + processed_count_in_run
+                overall_stats["processed_chunks"] = total_processed_chunk_count
                 self.progress_reporter.update_progress(processed_count_in_run, num_to_process, {
-                   "stage": "qa_processed",
-                   "valid_qs_total": len(all_processed_questions),
-                   "failed_qa_chunks": overall_stats.get("failed_qa_chunks", 0),
+                    "stage": "qa_processed",
+                    "valid_qs_total": len(all_processed_questions),
+                    "failed_qa_chunks": overall_stats.get("failed_qa_chunks", 0),
                 })
 
-                # --- Periodic Checkpoint Saving ---
-                total_processed_chunk_count = start_chunk_index + processed_count_in_run
-                if self.config.processing.enable_checkpoints and \
-                   checkpoint_interval > 0 and \
-                   (processed_count_in_run % checkpoint_interval == 0):
-                    self.logger.info(f"Checkpoint interval reached ({checkpoint_interval} chunks processed this run). Saving progress...")
-                    # Create stats snapshot *before* potentially modifying questions list again
-                    current_save_stats = overall_stats.copy()
-                    try:
-                        # Short pause before writing to potentially avoid race conditions if filesystem is slow
-                        await asyncio.sleep(0.05)
-                        self.checkpoint_manager.save_checkpoint(
-                            document=document,
-                            processed_chunk_count=total_processed_chunk_count,
-                            stats=current_save_stats,
-                            all_questions_so_far=all_processed_questions # Pass the current list
+                # --- Periodic Checkpoint Saving (per wave) ---
+                # Checkpoint when crossing a configured-interval boundary in this run.
+                if self.config.processing.enable_checkpoints and checkpoint_interval > 0:
+                    intervals_before = count_before_wave // checkpoint_interval
+                    intervals_after = processed_count_in_run // checkpoint_interval
+                    if intervals_after > intervals_before:
+                        self.logger.info(
+                            f"Checkpoint boundary reached at {processed_count_in_run} chunks processed this run. Saving progress..."
                         )
-                    except CheckpointError as cp_err:
-                         # Non-fatal, allow pipeline to continue
-                         self.logger.error(f"Failed to save intermediate checkpoint: {cp_err}")
-
-                current_chunk_abs_index += 1
+                        current_save_stats = overall_stats.copy()
+                        try:
+                            await asyncio.sleep(0.05)  # Brief pause before write
+                            self.checkpoint_manager.save_checkpoint(
+                                document=document,
+                                processed_chunk_count=total_processed_chunk_count,
+                                stats=current_save_stats,
+                                all_questions_so_far=all_processed_questions
+                            )
+                        except CheckpointError as cp_err:
+                            # Non-fatal, allow pipeline to continue
+                            self.logger.error(f"Failed to save intermediate checkpoint: {cp_err}")
 
 
             self._end_timer(ProcessingStage.QUESTION_GENERATION.name)

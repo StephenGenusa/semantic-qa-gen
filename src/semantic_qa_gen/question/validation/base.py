@@ -4,13 +4,15 @@
 
 from abc import ABC, abstractmethod
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 
 # Use Pydantic V2 imports
 from pydantic import BaseModel, Field
 
-from semantic_qa_gen.document.models import Question, Chunk # Keep these dependencies
-from semantic_qa_gen.utils.error import ValidationError # Keep custom error
+from semantic_qa_gen.document.models import Question, Chunk  # Keep these dependencies
+from semantic_qa_gen.utils.error import ValidationError  # Keep custom error
+from semantic_qa_gen.config.schema import BaseValidatorConfig  # Import Pydantic config model for type safety
+
 
 # --- Pydantic V2 ValidationResult Model ---
 class ValidationResult(BaseModel):
@@ -19,13 +21,16 @@ class ValidationResult(BaseModel):
     validator_name: Optional[str] = Field(None, description="Name of the validator producing this result.")
     is_valid: bool = Field(..., description="Validity outcome from this specific validator.")
     # Score(s) produced by this specific validator
-    scores: Dict[str, float] = Field(default_factory=dict, description="Dictionary of scores from this validator (e.g., {'factual_accuracy': 0.9}).")
+    scores: Dict[str, float] = Field(default_factory=dict,
+                                     description="Dictionary of scores from this validator (e.g., {'factual_accuracy': 0.9}).")
     # Reason(s) provided by this specific validator
-    reasons: List[str] = Field(default_factory=list, description="List of reasons supporting the validity decision (especially for failure).")
+    reasons: List[str] = Field(default_factory=list,
+                               description="List of reasons supporting the validity decision (especially for failure).")
     # Optional suggestions from this specific validator
-    suggested_improvements: Optional[str] = Field(None, description="Optional textual suggestions for improving the question/answer from this validator.")
+    suggested_improvements: Optional[str] = Field(None,
+                                                  description="Optional textual suggestions for improving the question/answer from this validator.")
 
-    model_config = { # Replaces Config class
+    model_config = {  # Replaces Config class
         "validate_assignment": True
     }
 
@@ -53,19 +58,31 @@ class BaseValidator(ABC):
     single LLM call managed by the ValidationEngine.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[Union[Dict[str, Any], BaseValidatorConfig]] = None):
         """
         Initialize the validator.
 
         Args:
-            config: Optional configuration dictionary (from the specific validator's
-                    section in the main config, e.g., validation.factual_accuracy).
+            config: Optional configuration dictionary or Pydantic model
+                    (from the specific validator's section in the main config,
+                    e.g., validation.factual_accuracy). Passing the Pydantic
+                    model provides type safety and IDE autocomplete.
         """
-        # Use Pydantic V2 BaseValidatorConfig or specific child for validation?
-        # Simpler: pass dict and let validator use it.
+        # Store the config (can be model or dict)
         self.config = config or {}
-        self.threshold = self.config.get('threshold', 0.6) # Default threshold
-        self.enabled = self.config.get('enabled', True)
+
+        # Extract threshold and enabled status safely from either type
+        if isinstance(self.config, BaseValidatorConfig):
+            self.threshold = self.config.threshold
+            self.enabled = self.config.enabled
+        elif isinstance(self.config, dict):
+            self.threshold = self.config.get('threshold', 0.6)  # Default threshold
+            self.enabled = self.config.get('enabled', True)
+        else:
+            # Fallback for unexpected types
+            self.threshold = 0.6
+            self.enabled = True
+
         self.name = self.__class__.__name__
         self.logger = logging.getLogger(f"{__name__}.{self.name}")
 
@@ -99,4 +116,3 @@ class BaseValidator(ABC):
     def is_enabled(self) -> bool:
         """Check if this validator is enabled via configuration."""
         return self.enabled
-

@@ -67,14 +67,38 @@ class SemanticQAGen:
             else:
                 self.project_path = project_path
         else:
-            # Try to find existing project from current directory
-            detected_project = self.project_manager.find_project_root()
+            detected_project = None
+
+            # If a config file was given, derive project root from its location.
+            # Convention: <project>/config/*.yaml -> project root is parent of config dir.
+            if config_path:
+                cfg_abs = os.path.abspath(config_path)
+                if os.path.isfile(cfg_abs):
+                    cfg_parent = os.path.dirname(cfg_abs)  # .../QAG/config
+                    candidate = os.path.dirname(cfg_parent)  # .../QAG
+                    # Accept it if it already looks like a project, OR
+                    # if the config sits in a "config" subdir (the convention).
+                    if self.project_manager._is_project_directory(candidate):
+                        detected_project = candidate
+                    elif os.path.basename(cfg_parent).lower() == "config":
+                        detected_project = candidate
+
+            # Otherwise, walk up from CWD looking for an existing project.
+            if not detected_project:
+                detected_project = self.project_manager.find_project_root()
+
             if detected_project:
                 self.project_path = detected_project
             else:
-                self.logger = logging.getLogger(__name__)  # Basic logger for project creation
-                # Create default project in current directory
-                self.project_path = self.project_manager.create_project_structure()
+                # NEW: do not silently create QAGenProject just because the user
+                # ran a command. Only auto-create when the caller asked for a project.
+                self.logger = logging.getLogger(__name__)
+                if config_path or config_dict:
+                    # User supplied configuration explicitly; treat CWD as project root,
+                    # but DON'T create the QAGenProject scaffold.
+                    self.project_path = os.getcwd()
+                else:
+                    self.project_path = self.project_manager.create_project_structure()
 
         # Determine initial log level
         log_level = "DEBUG" if verbose else "INFO"
@@ -87,8 +111,8 @@ class SemanticQAGen:
         self.logger.info(f"Using project directory: {self.project_path}")
 
         try:
-            # If no config_path provided, check for project config
-            if not config_path:
+            # If no config_path AND no config_dict provided, check for project config
+            if not config_path and not config_dict:
                 project_config = os.path.join(self.project_path, "config", "system.yaml")
                 if os.path.exists(project_config):
                     self.logger.info(f"Using project configuration: {project_config}")
@@ -109,8 +133,13 @@ class SemanticQAGen:
                 if hasattr(self.config.processing, 'debug_mode'):
                     self.config.processing.debug_mode = True
 
-            # Initialize the processing pipeline
-            self.pipeline = SemanticPipeline(self.config_manager)
+            # Tell the pipeline where prompts live for this project. The pipeline has
+            # its own fallback chain if this comes back as None.
+            project_prompts_dir = os.path.join(self.project_path, "prompts") if self.project_path else None
+            if project_prompts_dir and not os.path.isdir(project_prompts_dir):
+                project_prompts_dir = None  # Don't pass a non-existent path
+
+            self.pipeline = SemanticPipeline(self.config_manager, prompts_dir=project_prompts_dir)
 
             self.logger.info(f"SemanticQAGen v{__version__} initialized successfully.")
             effective_level = logging.getLogger('semantic_qa_gen').getEffectiveLevel()
@@ -124,9 +153,11 @@ class SemanticQAGen:
             self.logger.critical(f"Unexpected error during SemanticQAGen initialization: {e}", exc_info=True)
             raise SemanticQAGenError(f"Failed to initialize SemanticQAGen: {str(e)}") from e
 
-    def process_document(self, document_path: str) -> Dict[str, Any]:
+    async def process_document_async(self, document_path: str) -> Dict[str, Any]:
         """
-        Process a single document to generate question-answer pairs.
+        Process a single document to generate question-answer pairs asynchronously.
+        Use this method when calling from within an existing async event loop
+        (e.g., Jupyter Notebooks, FastAPI).
 
         Args:
             document_path: Path to the document. Can be absolute or relative to the project input directory.
@@ -165,25 +196,15 @@ class SemanticQAGen:
         if not os.path.isfile(resolved_path):
             raise DocumentError(f"Path is not a file: {resolved_path}")
 
-        self.logger.info(f"Starting processing for document: {resolved_path}")
+        self.logger.info(f"Starting async processing for document: {resolved_path}")
 
-        # Handle asyncio event loop
-        try:
-            loop = asyncio.get_running_loop()
-            is_new_loop = False
-        except RuntimeError:
-            self.logger.debug("No running asyncio event loop found, creating new one.")
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            is_new_loop = True
+        # Run the pipeline's main processing coroutine
+        # Ensure pipeline exists before running
+        if not hasattr(self, 'pipeline') or self.pipeline is None:
+            raise SemanticQAGenError("Processing pipeline was not initialized correctly.")
 
         try:
-            # Run the pipeline's main processing coroutine
-            # Ensure pipeline exists before running
-            if not hasattr(self, 'pipeline') or self.pipeline is None:
-                raise SemanticQAGenError("Processing pipeline was not initialized correctly.")
-
-            result = loop.run_until_complete(self.pipeline.process_document(resolved_path))
+            result = await self.pipeline.process_document(resolved_path)
             self.logger.info(f"Successfully processed document: {resolved_path}")
             return result
         except (FileNotFoundError, DocumentError, ConfigurationError, OutputError) as e:
@@ -194,17 +215,82 @@ class SemanticQAGen:
             # Wrap unexpected runtime errors
             self.logger.critical(f"Critical unexpected error processing {resolved_path}: {e}", exc_info=True)
             raise SemanticQAGenError(f"Failed to process document '{resolved_path}': {str(e)}") from e
-        finally:
-            # Close the loop only if we created it in this function scope
-            # This avoids closing loops potentially managed externally (e.g., in notebooks)
-            if is_new_loop:
-                try:
-                    # Close async generators and transports
-                    loop.run_until_complete(loop.shutdown_asyncgens())
-                finally:
-                    loop.close()
-                    asyncio.set_event_loop(None)  # Set loop policy back to default
-                    self.logger.debug("Closed locally created asyncio event loop.")
+
+    def process_document(self, document_path: str) -> Dict[str, Any]:
+        """
+        Process a single document to generate question-answer pairs.
+
+        Args:
+            document_path: Path to the document. Can be absolute or relative to the project input directory.
+
+        Returns:
+            Dictionary with processed questions, document info, and statistics.
+
+        Raises:
+            FileNotFoundError: If document not found.
+            DocumentError: If document is invalid or can't be processed.
+            ConfigurationError: If configuration is invalid.
+            SemanticQAGenError: For other processing errors.
+            RuntimeError: If called from within an existing async event loop.
+        """
+        # Resolve document path relative to project if needed
+        resolved_path = document_path
+        # Path resolution is now more robustly handled within this method
+        if not os.path.isabs(document_path):
+            # Check relative to current dir FIRST
+            if os.path.exists(os.path.abspath(document_path)):
+                resolved_path = os.path.abspath(document_path)
+                self.logger.debug(f"Resolved document path relative to CWD: {resolved_path}")
+            else:
+                # Then check relative to project input directory
+                project_input_path = os.path.join(self.project_path, "input", document_path)
+                if os.path.exists(project_input_path):
+                    resolved_path = project_input_path
+                    self.logger.debug(f"Resolved document path relative to project input: {resolved_path}")
+                else:
+                    # If not found in either place
+                    raise FileNotFoundError(f"Document not found: '{document_path}' "
+                                            f"(checked absolute and relative to project input dir '{os.path.join(self.project_path, 'input')}').")
+        elif not os.path.exists(resolved_path):
+            # If absolute path was given but doesn't exist
+            raise FileNotFoundError(f"Absolute document path does not exist: {resolved_path}")
+
+        if not os.path.isfile(resolved_path):
+            raise DocumentError(f"Path is not a file: {resolved_path}")
+
+        self.logger.info(f"Starting processing for document: {resolved_path}")
+
+        # Handle asyncio event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        # If there is a running loop, we cannot call run_until_complete
+        if loop and loop.is_running():
+            raise RuntimeError(
+                "Cannot call `process_document` synchronously from a running async event loop "
+                "(e.g., Jupyter, FastAPI). Use `await process_document_async()` instead."
+            )
+
+        # Run the pipeline's main processing coroutine
+        try:
+            # Ensure pipeline exists before running
+            if not hasattr(self, 'pipeline') or self.pipeline is None:
+                raise SemanticQAGenError("Processing pipeline was not initialized correctly.")
+
+            # asyncio.run() handles creation and closing of the loop safely
+            result = asyncio.run(self.pipeline.process_document(resolved_path))
+            self.logger.info(f"Successfully processed document: {resolved_path}")
+            return result
+        except (FileNotFoundError, DocumentError, ConfigurationError, OutputError) as e:
+            # Log specific pipeline errors and re-raise them
+            self.logger.error(f"Error processing document {resolved_path}: {e}")
+            raise
+        except Exception as e:
+            # Wrap unexpected runtime errors
+            self.logger.critical(f"Critical unexpected error processing {resolved_path}: {e}", exc_info=True)
+            raise SemanticQAGenError(f"Failed to process document '{resolved_path}': {str(e)}") from e
 
     def process_input_directory(self, output_format: Optional[str] = None) -> Dict[str, Any]:
         """

@@ -2,21 +2,24 @@
 
 import os
 import re
-import numpy as np
 import fitz  # PyMuPDF
 from collections import Counter
 from difflib import SequenceMatcher
 from typing import Dict, Any, Optional, List, Tuple, Set
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 
 # Check if tesseract/pytesseract are available
 try:
     import pytesseract
     from PIL import Image
     import io
-
     TESSERACT_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     TESSERACT_AVAILABLE = False
+    MISSING_DEP_NAME = e.name  # Capture specific missing package
+
 
 from semantic_qa_gen.document.loaders.base import BaseLoader
 from semantic_qa_gen.document.models import Document, DocumentType, DocumentMetadata, Section, SectionType
@@ -60,8 +63,8 @@ class PDFLoader(BaseLoader):
         # Check if OCR is enabled but dependencies are missing
         if self.ocr_enabled and not TESSERACT_AVAILABLE:
             self.logger.warning(
-                "OCR is enabled in configuration, but pytesseract or Pillow is not installed. "
-                "OCR functionality will be disabled. Install with: pip install pytesseract pillow"
+                f"OCR is enabled, but '{MISSING_DEP_NAME}' is not installed. "  # Specific feedback
+                "OCR functionality will be disabled."
             )
             self.ocr_enabled = False
 
@@ -85,6 +88,9 @@ class PDFLoader(BaseLoader):
         try:
             # Open the PDF document
             pdf_document = fitz.open(path)
+            if pdf_document.is_encrypted:
+                pdf_document.close()
+                raise DocumentError(f"PDF file is encrypted and cannot be loaded: {path}")
 
             # Extract metadata
             metadata = self._extract_metadata(pdf_document, path)
@@ -155,11 +161,10 @@ class PDFLoader(BaseLoader):
         if creation_date and creation_date.startswith('D:'):
             # PDF date format: D:YYYYMMDDHHmmSSOHH'mm'
             try:
-                date_str = creation_date[2:14]  # Extract YYYYMMDDHHMM
+                date_str = creation_date[2:14]
                 formatted_date = f"{date_str[0:4]}-{date_str[4:6]}-{date_str[6:8]}"
                 creation_date = formatted_date
-            except:
-                # If parsing fails, use the original value
+            except (ValueError, IndexError):  # Specific exceptions
                 pass
 
         metadata = DocumentMetadata(
@@ -704,15 +709,12 @@ class PDFLoader(BaseLoader):
         # Use clustering to identify column centers
         try:
             # Try using numpy for clustering if available
-            import numpy as np
-            from sklearn.cluster import KMeans
 
             # Reshape for KMeans
             X = np.array(x_centers).reshape(-1, 1)
 
             # Estimate number of columns (1-3)
             # Use silhouette score to determine optimal number
-            from sklearn.metrics import silhouette_score
             best_score = -1
             best_n_clusters = 1
 
@@ -752,7 +754,7 @@ class PDFLoader(BaseLoader):
 
             return columns
 
-        except (ImportError, Exception) as e:
+        except Exception as e:
             # Fallback to simple column detection
             self.logger.debug(f"KMeans clustering failed for column detection: {e}. Using simple approach.")
 

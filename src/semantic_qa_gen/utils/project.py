@@ -37,9 +37,8 @@ class ProjectManager:
         "input": "User input documents",
         "output": "Output files",
         "logs": "Log files",
-        "temp": "Temporary files and checkpoints"
+        "temp": "Temporary files and checkpoints",
     }
-
 
     def create_project_structure(self, project_path: Optional[str] = None) -> str:
         """
@@ -171,7 +170,7 @@ class ProjectManager:
         # Check for key directories and files that would indicate a project
         required_dirs = ["config", "input", "output"]
         config_file = os.path.join(path, "config", "system.yaml")
-        prompts_dir = os.path.join(path, "config", "prompts")
+        prompts_dir = os.path.join(path, "prompts")
 
         # Directory must exist and contain required subdirectories
         if not os.path.isdir(path):

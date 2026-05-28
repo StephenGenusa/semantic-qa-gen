@@ -497,7 +497,7 @@ class DocumentProcessor:
                          # Try to extract just the core title part if possible
                          heading_parts = [p for p in match.groups() if p is not None]
                          heading_content = " ".join(heading_parts).strip()
-                    elif pattern.pattern.startswith('^([A-Z\\s\d]+)$'): # ALL CAPS
+                    elif pattern.pattern.startswith('^([A-Z\\s\\d]+)$'): # ALL CAPS
                          potential_heading_level = 1
                     elif pattern.pattern.startswith('^([A-Z][A-Za-z\\s]*)$'): # Title Case
                           # Consider Title Case a heading only if short and doesn't end like a sentence

@@ -299,6 +299,28 @@ class QuestionGenerator:
                     self.logger.warning(f"Item {i}: Invalid question/answer - Q: {question_text}, A: {answer_text}")
                     continue
 
+                # An option if the above generates too much noise (there is a similar log just below)
+                # # Distinguish "LLM legitimately omitted this item" (grounding
+                # # rules permit returning fewer questions than requested) from
+                # # "LLM returned a malformed item." Only the latter is noteworthy.
+                # missing_both = question_text is None and answer_text is None
+                # malformed = (
+                #         not missing_both
+                #         and (
+                #                 not question_text
+                #                 or not answer_text
+                #                 or not isinstance(question_text, str)
+                #                 or not isinstance(answer_text, str)
+                #         )
+                # )
+                # if missing_both:
+                #     self.logger.debug(f"Item {i}: LLM omitted question/answer (expected under grounding rules)")
+                #     continue
+                # if malformed:
+                #     self.logger.warning(
+                #         f"Item {i}: Malformed question/answer - Q: {question_text}, A: {answer_text}")
+                #     continue
+
                 # Normalize and validate
                 question_text = question_text.strip()
                 answer_text = answer_text.strip()
