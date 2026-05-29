@@ -26,6 +26,7 @@ from semantic_qa_gen.llm.prompts.manager import PromptManager
 from semantic_qa_gen.question.generator import QuestionGenerator
 from semantic_qa_gen.question.validation.engine import ValidationEngine
 from semantic_qa_gen.question.processor import QuestionProcessor
+from semantic_qa_gen.question.validation.decontextualizer import Decontextualizer
 from semantic_qa_gen.output.formatter import OutputFormatter
 from semantic_qa_gen.utils.checkpoint import CheckpointManager, CheckpointError
 from semantic_qa_gen.utils.error import (
@@ -114,21 +115,33 @@ class SemanticPipeline:
         # Initialize generators and validators, passing necessary dependencies
         self.question_generator = QuestionGenerator(self.config_manager, self.task_router, self.prompt_manager)
         self.validation_engine = ValidationEngine(self.config_manager, self.task_router, self.prompt_manager)
-        # Initialize the QuestionProcessor with generator and validator engine
-        self.question_processor = QuestionProcessor(self.config_manager, self.question_generator, self.validation_engine)
+        # Phase 2: decontextualization repair stage. Constructed unconditionally;
+        # whether it runs is governed by the 'decontextualization' config section,
+        # checked inside QuestionProcessor. Passing it in keeps the processor able
+        # to repair without reaching back into the pipeline.
+        self.decontextualizer = Decontextualizer(self.config_manager, self.task_router, self.prompt_manager)
+        self.question_processor = QuestionProcessor(
+            self.config_manager,
+            self.question_generator,
+            self.validation_engine,
+            self.decontextualizer,
+        )
+        # Resolve checkpoint directory.
+        #   * An ABSOLUTE checkpoint_dir is used exactly as given.
+        #   * A RELATIVE checkpoint_dir (e.g. the schema default "./checkpoints")
+        #     is anchored to a stable project root, NOT the current working
+        #     directory. Anchoring to CWD makes the location depend on where the
+        #     process was launched, which is why checkpoints could land outside
+        #     the project. The project root is taken to be the config file's
+        #     directory; if no config file is known, fall back to CWD.
+        checkpoint_dir = getattr(self.config.processing, 'checkpoint_dir', None) or 'checkpoints'
 
-        # Resolve checkpoint directory. Prefer the config-declared path (per schema
-        # default './checkpoints'); only fall back to deriving from config_path if
-        # the config value is missing for some reason.
-        checkpoint_dir = getattr(self.config.processing, 'checkpoint_dir', None)
-        if not checkpoint_dir:
+        if not os.path.isabs(checkpoint_dir):
             cfg_path = getattr(self.config_manager, "config_path", None)
-            if cfg_path:
-                checkpoint_dir = os.path.join(
-                    os.path.dirname(os.path.abspath(cfg_path)), 'checkpoints'
-                )
-            else:
-                checkpoint_dir = os.path.join(os.getcwd(), 'checkpoints')
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(cfg_path)))
+            checkpoint_dir = os.path.normpath(os.path.join(project_root, checkpoint_dir))
+
+        self.logger.debug(f"Resolved checkpoint directory: {checkpoint_dir}")
 
         # CheckpointManager needs the full validated config object
         self.checkpoint_manager = CheckpointManager(self.config, checkpoint_dir)

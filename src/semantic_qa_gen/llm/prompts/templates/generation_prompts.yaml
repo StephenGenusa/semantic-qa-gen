@@ -1,0 +1,58 @@
+# Default prompt templates (generation_prompts.yaml), written by SemanticQAGen.
+# Edit freely. This file is NOT overwritten once it exists.
+#
+# This is YAML, not Python: do NOT add a leading """docstring""".
+# Braces in JSON examples are doubled ({{ }}) because each template is
+# consumed by str.format(); single braces will break formatting.
+
+question_generation:
+  description: "Generates source-grounded question/answer pairs from a text chunk."
+  json_output: true
+  system_prompt: "You are an expert at extracting question-answer pairs from source text. You only generate questions that can be fully answered from the provided passage. You never use outside knowledge. Your question-answer pairs are used to train language models, so each pair must be fully self-contained: the question must make sense on its own, with no reference to the source passage, and the answer must read as a freestanding statement of fact. You return strictly valid JSON and nothing else."
+  template: |
+    Generate question-answer pairs from the following source text. The answers must be derivable from the source text alone, but the questions and answers themselves must be fully self-contained and readable without access to the source. These pairs will be used as training data for language models, where the source passage will NOT be available alongside the question.
+
+    Source text:
+    ---
+    {chunk_content}
+    ---
+
+    Analyzer context (use this to choose what to ask about and how deeply to answer; do not quote it back in your output):
+    - Key concepts to target: {key_concepts}
+    - Full analyzer output (JSON): {analysis_details}
+
+    Target counts (these are upper bounds, not quotas):
+    - Up to {factual_count} factual questions
+    - Up to {inferential_count} inferential questions
+    - Up to {conceptual_count} conceptual questions
+    - Total target: up to {total_questions} questions
+
+    Category definitions (use these exact criteria when labeling each question):
+
+    - factual: answerable by quoting or paraphrasing a single span of the source text. The answer is directly stated in the passage.
+    - inferential: requires combining two or more distinct pieces of information from the source text to answer. The answer is not directly stated but follows from what is stated.
+    - conceptual: requires identifying a principle, pattern, or generalization that the source text supports. The answer requires synthesizing across the passage, but must still be grounded in what the text says.
+
+    Grounding rules (these are mandatory):
+
+    1. The answer to every question must be fully supported by the source text. Do not draw on outside knowledge, common knowledge, or anything not present in the passage above.
+    2. If the source text does not contain enough information to fully answer a question, DO NOT generate that question. In this case, returning fewer questions than the target is correct and expected.
+    3. If the passage is too thin to generate any questions of a given category, omit that category entirely. Returning an empty list is acceptable.
+    4. The answer must directly address the question. Do not pad answers with background that is not in the source text.
+
+    Self-containment: every question and answer must stand alone as if the source passage does not exist. Name the subject of each question explicitly (a concept, system, person, or entity), so a reader who has never seen the passage can understand and answer it. Write answers as freestanding statements of fact that restate their subject rather than pointing back at the passage. If the passage never names the subject it describes, do not generate that question.
+
+    Return your output as a JSON array. Each element is one question:
+    [
+        {{
+            "question": "The question text.",
+            "answer": "The answer, fully supported by the source text.",
+            "category": "factual"
+        }}
+    ]
+
+    The "category" field must be exactly one of: "factual", "inferential", "conceptual".
+
+    **CRITICAL: Your response MUST be ONLY a JSON array conforming to RFC 8259.**
+    **DO NOT include any comments (// or #), markdown code fences, or any text outside the JSON array.**
+

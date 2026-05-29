@@ -447,6 +447,18 @@ class ValidationEngine:
         self._write_validation_metadata(question, result, leak)
         return result
 
+    async def revalidate_pair(self, question: Question, chunk: Chunk) -> Dict[str, Any]:
+        """Re-validate a single (rewritten) pair against leak filter, faithfulness,
+        and standalone — WITHOUT diversity. Used by the decontextualization repair
+        stage to decide whether a rewrite may replace the original. Diversity is a
+        set-level property and is intentionally not re-run here; it remains the
+        first-pass verdict for the surviving set.
+
+        Returns the same aggregated dict shape as the first-pass results
+        (keys: is_valid, scores, reasons, suggested_improvements, validation_results).
+        """
+        return await self._validate_question_workflow(question, chunk, needs_llm_call=True)
+
     def _write_validation_metadata(self, question: Question, result: Dict[str, Any],
                                    leak=None) -> None:
         """Write the aggregated verdict onto question.metadata['validation'].
@@ -481,3 +493,4 @@ class ValidationEngine:
                           aggregated_results: Dict[str, Dict[str, Any]]) -> List[Question]:
         """Filter questions based on the aggregated validation results."""
         return [q for q in questions if aggregated_results.get(q.id, {}).get("is_valid", False)]
+

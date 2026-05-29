@@ -8,6 +8,7 @@ from semantic_qa_gen.question.validation.factual import (
     QuestionClarityValidator
 )
 from semantic_qa_gen.question.validation.diversity import DiversityValidator
+from semantic_qa_gen.question.validation.decontextualizer import Decontextualizer
 
 __all__ = [
     'BaseValidator',
@@ -16,5 +17,6 @@ __all__ = [
     'FactualAccuracyValidator',
     'AnswerCompletenessValidator',
     'QuestionClarityValidator',
-    'DiversityValidator'
+    'DiversityValidator',
+    'Decontextualizer'
 ]

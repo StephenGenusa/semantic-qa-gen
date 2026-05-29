@@ -1,0 +1,44 @@
+# Default prompt templates (decontextualize_prompts.yaml), written by SemanticQAGen.
+# Edit freely. This file is NOT overwritten once it exists.
+#
+# This is YAML, not Python: do NOT add a leading """docstring""".
+# Braces in JSON examples are doubled ({{ }}) because each template is
+# consumed by str.format(); single braces will break formatting.
+
+decontextualize:
+  description: "Rewrites a Q/A pair to stand alone, preserving its grounded meaning."
+  json_output: true
+  system_prompt: "You revise question-answer pairs so they stand on their own as training data, without access to any source passage. You preserve the meaning: you ask about the same thing and keep the same answer fact. You may consult the source text only to resolve what a vague reference points to; you never add facts that are not in the source. You return strictly valid JSON and nothing else."
+  template: |
+    A question-answer pair needs revising so it stands on its own as training data, where the source passage will NOT be shown alongside it. Rewrite it so the question names its own subject explicitly and the answer reads as a freestanding statement of fact. Preserve the meaning — ask about the same thing, keep the same answer fact, and keep the same category and difficulty. Add no information that is not in the source text.
+
+    Source text (use only to resolve what a vague reference points to; do not quote it back):
+    ---
+    {chunk_content}
+    ---
+
+    Original question ({category}): {question_text}
+    Original answer: {answer_text}
+
+    What was wrong: {issue}
+
+    How to rewrite:
+    - Replace vague references ("this technique", "the algorithm", "it", "the author") with the explicit named subject drawn from the source.
+    - Remove any phrase that points back at the source ("is mentioned", "as described", "according to the passage").
+    - Keep the answer's fact identical; change only how it is phrased so it reads as a standalone statement, and keep it as concise as fully answering allows.
+    - Keep the question in its original category ({category}); do not turn a factual question into a conceptual one or vice versa.
+
+    If the source does not name the subject clearly enough to make the pair stand alone, do not invent one — return null for both fields.
+
+    Return EXACTLY this JSON object:
+    {{
+        "question": "The rewritten question, naming its subject.",
+        "answer": "The rewritten answer, a standalone statement of fact."
+    }}
+
+    If the pair cannot be made standalone from the source, return exactly:
+    {{"question": null, "answer": null}}
+
+    **CRITICAL: Your response MUST be ONLY a single, strictly valid JSON object conforming to RFC 8259.**
+    **DO NOT include any comments (// or #), markdown code fences, or any text outside the JSON structure.**
+

@@ -81,6 +81,7 @@ class PromptManager:
         "question_generation",
         "faithfulness_validation",
         "standalone_validation",
+        "decontextualize",
     }
 
     def __init__(self, prompts_dir: Optional[str] = None, strict_yaml: bool = False,
@@ -283,6 +284,14 @@ class PromptManager:
                     "system_prompt": _STANDALONE_VALIDATION_SYSTEM_PROMPT,
                 },
             ),
+            "decontextualize": (
+                _DECONTEXTUALIZE_TEMPLATE,
+                {
+                    "description": "Rewrites a Q/A pair to stand alone, preserving grounded meaning",
+                    "json_output": True,
+                    "system_prompt": _DECONTEXTUALIZE_SYSTEM_PROMPT,
+                },
+            ),
         }
         for key in missing_keys:
             entry = registry.get(key)
@@ -357,6 +366,7 @@ class PromptManager:
         "analysis_prompts.yaml": ["chunk_analysis"],
         "generation_prompts.yaml": ["question_generation"],
         "validation_prompts.yaml": ["faithfulness_validation", "standalone_validation"],
+        "decontextualize_prompts.yaml": ["decontextualize"],
     }
 
     def _default_definitions(self) -> Dict[str, Dict[str, Any]]:
@@ -386,6 +396,12 @@ class PromptManager:
                 "description": "Scores whether a Q/A pair is understandable without the source.",
                 "json_output": True,
                 "system_prompt": _STANDALONE_VALIDATION_SYSTEM_PROMPT,
+            },
+            "decontextualize": {
+                "template": _DECONTEXTUALIZE_TEMPLATE,
+                "description": "Rewrites a Q/A pair to stand alone, preserving its grounded meaning.",
+                "json_output": True,
+                "system_prompt": _DECONTEXTUALIZE_SYSTEM_PROMPT,
             },
         }
 
@@ -590,26 +606,24 @@ the passage you analyzed:
 
 
 _QUESTION_GENERATION_SYSTEM_PROMPT = (
-    "You are an expert at extracting question-answer pairs from source text. "
-    "You only generate questions that can be fully answered from the provided "
-    "passage. You never use outside knowledge. Your question-answer pairs are "
-    "used to train language models, so each pair must be fully self-contained: "
-    "the question must make sense on its own, with no reference to the source "
-    "passage, and the answer must read as a freestanding statement of fact. "
-    "You return strictly valid JSON and nothing else."
+    "You are an expert at writing question-answer pairs from source text for "
+    "training language models. You ground every answer in the provided passage "
+    "and use no outside knowledge. You write each question so it names its own "
+    "subject and reads as a complete, freestanding question, and each answer so "
+    "it restates that subject as a standalone statement of fact, as concise as "
+    "fully answering allows and never padded. You match the form of the worked "
+    "examples you are given. You return strictly valid JSON and nothing else."
 )
 
 
-# NOTE: This is the existing generation template, preserved as-is. Replacing the
-# blocklist / verbatim-bad-example approach with positive, good-only exemplars is
-# Phase 1 (prompt hygiene); it is intentionally NOT bundled into this fix, whose
-# scope is making the system load and run again.
+# NOTE: Phase 1 rewrite. Positive, form-first framing with good-only exemplars
+# (no blocklist, no bad examples). Leakage is caught downstream by the
+# deterministic leak filter and the source-free standalone judge, so this prompt
+# teaches good form by demonstration rather than policing avoidance.
 _QUESTION_GENERATION_TEMPLATE = """\
-Generate question-answer pairs from the following source text. The answers \
-must be derivable from the source text alone, but the questions and answers \
-themselves must be fully self-contained and readable without access to the \
-source. These pairs will be used as training data for language models, where \
-the source passage will NOT be available alongside the question.
+Write question-answer pairs from the source text below. Ground every answer in \
+what the passage states, and write each pair so it stands on its own as \
+training data, where the source passage will NOT be shown alongside it.
 
 Source text:
 ---
@@ -621,48 +635,86 @@ answer; do not quote it back in your output):
 - Key concepts to target: {key_concepts}
 - Full analyzer output (JSON): {analysis_details}
 
-Target counts (these are upper bounds, not quotas):
+Target counts (upper bounds, not quotas):
 - Up to {factual_count} factual questions
 - Up to {inferential_count} inferential questions
 - Up to {conceptual_count} conceptual questions
-- Total target: up to {total_questions} questions
+- Total: up to {total_questions} questions
 
-Category definitions (use these exact criteria when labeling each question):
+Category definitions (label each question with exactly one):
 
-- factual: answerable by quoting or paraphrasing a single span of the source \
-text. The answer is directly stated in the passage.
+- factual: answerable from a single span of the source text. The answer is \
+directly stated in the passage.
 - inferential: requires combining two or more distinct pieces of information \
-from the source text to answer. The answer is not directly stated but \
-follows from what is stated.
-- conceptual: requires identifying a principle, pattern, or generalization \
-that the source text supports. The answer requires synthesizing across the \
-passage, but must still be grounded in what the text says.
+from the source text. The answer follows from what is stated without being \
+stated outright.
+- conceptual: requires identifying a principle, pattern, or generalization the \
+source text supports, synthesizing across the passage while staying grounded \
+in what it says.
 
-Grounding rules (these are mandatory):
+How to ground each pair:
 
-1. The answer to every question must be fully supported by the source text. \
-Do not draw on outside knowledge, common knowledge, or anything not present \
-in the passage above.
-2. If the source text does not contain enough information to fully answer a \
-question, DO NOT generate that question. In this case, returning fewer questions than the \
-target is correct and expected.
-3. If the passage is too thin to generate any questions of a given category, \
-omit that category entirely. Returning an empty list is acceptable.
-4. The answer must directly address the question. Do not pad answers with \
-background that is not in the source text.
+1. Use only the source text. Draw on no outside or common knowledge beyond \
+what the passage states.
+2. Make the answer fully supported by the passage and directly responsive to \
+the question, with no padding.
+3. Generate a question only when the passage supports a complete answer.
 
-Self-containment: every question and answer must stand alone as if the source \
-passage does not exist. Name the subject of each question explicitly (a \
-concept, system, person, or entity), so a reader who has never seen the \
-passage can understand and answer it. Write answers as freestanding \
-statements of fact that restate their subject rather than pointing back at \
-the passage. If the passage never names the subject it describes, do not \
-generate that question.
+How to make each pair stand on its own:
 
-Return your output as a JSON array. Each element is one question:
+4. Name the subject of every question explicitly — the concept, system, \
+method, person, or entity it is about — so a reader who has never seen the \
+passage understands and can answer it. If the passage never names the subject \
+it describes, do not ask about it.
+5. Write each answer as a freestanding statement of fact that restates its \
+subject. Prefer "The Peace of Westphalia ended ..." over "It ended ..." or \
+"The treaty mentioned is ...".
+6. Vary the phrasing and the question stems across the set; do not start every \
+question the same way.
+
+How long each answer should be:
+
+7. Make each answer only as long as fully answering requires, and no longer. \
+Length follows the question, not a fixed target. As a guide: factual answers \
+are usually a single sentence; inferential answers give just enough to show how \
+the combined facts connect; conceptual answers state the principle and what \
+grounds it, typically two to three sentences.
+8. There is no minimum length and no quota of words. Never pad an answer to seem \
+thorough, never add background, restatement, or hedging the question did not \
+ask for, and do not inflate the answer because the question was hard. A \
+complete short answer is better than a padded long one.
+
+Examples of well-formed pairs (these illustrate FORM ONLY — write your \
+questions about the source text above, NOT about these topics. Note how the \
+factual answers stop as soon as the fact is stated):
 [
     {{
-        "question": "The question text.",
+        "question": "What treaty ended the Thirty Years' War?",
+        "answer": "The Peace of Westphalia ended the Thirty Years' War in 1648.",
+        "category": "factual"
+    }},
+    {{
+        "question": "Why does a central bank raising interest rates tend to reduce inflation but slow economic growth?",
+        "answer": "Higher rates make borrowing more expensive, which curbs spending and eases upward pressure on prices; the same drop in spending also slows output and hiring, which dampens growth.",
+        "category": "inferential"
+    }},
+    {{
+        "question": "How does natural selection lead a population to become better adapted to its environment over time?",
+        "answer": "Individuals whose traits suit their environment tend to survive and reproduce more, so those traits grow more common across generations, gradually shifting the population toward greater adaptation.",
+        "category": "conceptual"
+    }},
+    {{
+        "question": "Which clustering algorithm does product quantization use to group the vectors in each sub-space into k centroids?",
+        "answer": "Product quantization uses k-means clustering to group the vectors in each sub-space into k centroids.",
+        "category": "factual"
+    }}
+]
+
+Return your output as a JSON array with this exact structure, one object per \
+question:
+[
+    {{
+        "question": "The question text, naming its own subject.",
         "answer": "The answer, fully supported by the source text.",
         "category": "factual"
     }}
@@ -787,6 +839,63 @@ with a value appropriate to the pair you scored:
     }},
     "suggested_improvements": "Optional rewrite suggestion that names the subject, or an empty string."
 }}
+
+**CRITICAL: Your response MUST be ONLY a single, strictly valid JSON object conforming to RFC 8259.**
+**DO NOT include any comments (// or #), markdown code fences, or any text outside the JSON structure.**
+"""
+
+
+_DECONTEXTUALIZE_SYSTEM_PROMPT = (
+    "You revise question-answer pairs so they stand on their own as training "
+    "data, without access to any source passage. You preserve the meaning: you "
+    "ask about the same thing and keep the same answer fact. You may consult the "
+    "source text only to resolve what a vague reference points to; you never add "
+    "facts that are not in the source. You return strictly valid JSON and "
+    "nothing else."
+)
+
+
+# Placeholder contract: chunk_content, question_text, answer_text, category, issue
+_DECONTEXTUALIZE_TEMPLATE = """\
+A question-answer pair needs revising so it stands on its own as training data, \
+where the source passage will NOT be shown alongside it. Rewrite it so the \
+question names its own subject explicitly and the answer reads as a freestanding \
+statement of fact. Preserve the meaning — ask about the same thing, keep the \
+same answer fact, and keep the same category and difficulty. Add no information \
+that is not in the source text.
+
+Source text (use only to resolve what a vague reference points to; do not quote \
+it back):
+---
+{chunk_content}
+---
+
+Original question ({category}): {question_text}
+Original answer: {answer_text}
+
+What was wrong: {issue}
+
+How to rewrite:
+- Replace vague references ("this technique", "the algorithm", "it", "the \
+author") with the explicit named subject drawn from the source.
+- Remove any phrase that points back at the source ("is mentioned", "as \
+described", "according to the passage").
+- Keep the answer's fact identical; change only how it is phrased so it reads as \
+a standalone statement, and keep it as concise as fully answering allows.
+- Keep the question in its original category ({category}); do not turn a factual \
+question into a conceptual one or vice versa.
+
+If the source does not name the subject clearly enough to make the pair stand \
+alone, do not invent one — return null for both fields.
+
+Return EXACTLY this JSON object:
+{{
+    "question": "The rewritten question, naming its subject.",
+    "answer": "The rewritten answer, a standalone statement of fact."
+}}
+
+If the pair cannot be made standalone from the source, return exactly:
+{{"question": null, "answer": null}}
 
 **CRITICAL: Your response MUST be ONLY a single, strictly valid JSON object conforming to RFC 8259.**
 **DO NOT include any comments (// or #), markdown code fences, or any text outside the JSON structure.**

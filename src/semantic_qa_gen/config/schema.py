@@ -368,6 +368,27 @@ class ValidationConfig(BaseModel):
     question_clarity: ClarityValidatorConfig = Field(default_factory=ClarityValidatorConfig)
     diversity: DiversityValidatorConfig = Field(default_factory=DiversityValidatorConfig)
 
+# --- Decontextualization (Phase 2 repair stage) ---
+class DecontextualizationConfig(BaseModel):
+    """Controls the rewrite stage that repairs questions which leaked a source
+    reference (leak-filter FLAG) or failed the source-free standalone judge."""
+    enabled: bool = Field(True, description="Enable the decontextualization repair stage.")
+    max_attempts: int = Field(
+        1, ge=1, le=3,
+        description="How many rewrite attempts per question before giving up."
+    )
+    mode: str = Field(
+        "rewrite",
+        description="Repair strategy. 'rewrite' = single-pass. Reserved for future 'qa_rewrite'."
+    )
+
+    @field_validator("mode")
+    @classmethod
+    def _check_mode(cls, v: str) -> str:
+        valid = {"rewrite", "qa_rewrite"}
+        if v not in valid:
+            raise ValueError(f"decontextualization.mode must be one of {valid}")
+        return v
 
 # --- Output Configuration ---
 class OutputConfig(BaseModel):
@@ -435,6 +456,7 @@ class SemanticQAGenConfig(BaseModel):
     llm_services: LLMServiceConfig = Field(default_factory=LLMServiceConfig)
     question_generation: QuestionGenerationConfig = Field(default_factory=QuestionGenerationConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
+    decontextualization: DecontextualizationConfig = Field(default_factory=DecontextualizationConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
 
