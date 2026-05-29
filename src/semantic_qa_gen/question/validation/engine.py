@@ -13,18 +13,19 @@ from semantic_qa_gen.config.schema import ValidationConfig
 from semantic_qa_gen.document.models import Question, Chunk
 from semantic_qa_gen.question.validation.base import BaseValidator, ValidationResult
 from semantic_qa_gen.question.validation.factual import (
-    FactualAccuracyValidator, AnswerCompletenessValidator, QuestionClarityValidator
+    FactualAccuracyValidator, AnswerCompletenessValidator, StandaloneValidator
 )
+from semantic_qa_gen.question.filters.leak_filter import LeakFilter, LeakAction
 from semantic_qa_gen.question.validation.diversity import DiversityValidator
 from semantic_qa_gen.llm.router import TaskRouter, LLMTaskService # Keep import
 from semantic_qa_gen.llm.prompts.manager import PromptManager
 from semantic_qa_gen.utils.error import ValidationError, LLMServiceError, ConfigurationError
 
 
-# Dimension keys expected in the LLM validation response. Centralized so the
-# parser and any future consumer agree on the contract.
-_VALIDATION_DIMENSIONS = ("factual_accuracy", "answer_completeness", "question_clarity")
-
+# Faithfulness call (WITH source) and standalone call (WITHOUT source) return
+# different dimension sets; each is parsed against its own expected set.
+_FAITHFULNESS_DIMENSIONS = ("factual_accuracy", "answer_completeness")
+_STANDALONE_DIMENSIONS = ("standalone",)
 
 class ValidationEngine:
     """
@@ -46,6 +47,10 @@ class ValidationEngine:
         self.config: ValidationConfig = config_manager.get_section("validation")
         self.task_router = task_router
         self.prompt_manager = prompt_manager
+        # Stage D: deterministic, LLM-free leak gate (defaults are conservative).
+        # Phase 1 will source patterns/enabled from a LeakFilterConfig in the schema;
+        # for now the built-in defaults apply.
+        self.leak_filter = LeakFilter()
         self.logger = logging.getLogger(__name__)
         self.validators: Dict[str, BaseValidator] = {}
         self.llm_dependent_validators: List[str] = []
@@ -56,10 +61,10 @@ class ValidationEngine:
         validator_map: Dict[str, Tuple[Type[BaseValidator], Any]] = {
             "factual_accuracy": (FactualAccuracyValidator, self.config.factual_accuracy),
             "answer_completeness": (AnswerCompletenessValidator, self.config.answer_completeness),
-            "question_clarity": (QuestionClarityValidator, self.config.question_clarity),
+            "standalone": (StandaloneValidator, self.config.question_clarity),
             "diversity": (DiversityValidator, self.config.diversity),
         }
-        llm_dependent_names = ["factual_accuracy", "answer_completeness", "question_clarity"]
+        llm_dependent_names = ["factual_accuracy", "answer_completeness", "standalone"]
         for name, (validator_cls, validator_config) in validator_map.items():
              if validator_config.enabled:
                  try:
@@ -80,109 +85,117 @@ class ValidationEngine:
         if requires_llm and name_lower not in self.llm_dependent_validators: self.llm_dependent_validators.append(name_lower)
         self.logger.info(f"Registered custom validator: {name_lower} (Requires LLM: {requires_llm})")
 
-    async def _get_shared_llm_validation_data(self, question: Question, chunk: Chunk) -> Optional[Dict[str, Any]]:
-        """Makes the single LLM call needed by factual/completeness/clarity validators."""
-        task_name = "validation"
-        prompt_key = "question_validation"
+    async def _call_validation_prompt(self, prompt_key, expected_dims, prompt_vars, question_id):
+        """Run one validation LLM call and parse it. Returns the parsed dict, or
+        None on any failure so callers can degrade gracefully."""
         try:
-             # 1. Get the LLMTaskService
-             llm_service: LLMTaskService = self.task_router.get_task_handler(task_name)
-
-             # Use the renamed field task_model_config
-             self.logger.debug(f"Making shared LLM validation call for Q:{question.id} using "
-                              f"adapter {type(llm_service.adapter).__name__} and model {llm_service.task_model_config.name}")
-
-             # 2. Format the prompt
-             prompt_vars = {"chunk_content": chunk.content, "question_text": question.text, "answer_text": question.answer}
-             formatted_prompt = llm_service.prompt_manager.format_prompt(prompt_key, **prompt_vars)
-             expects_json = llm_service.prompt_manager.is_json_output(prompt_key)
-
-             # 3. Call adapter's generic completion method
-             response_text = await llm_service.adapter.generate_completion(
-                 prompt=formatted_prompt,
-                 model_config=llm_service.task_model_config
-             )
-
-             # 4. Parse the response
-             validation_data = self._parse_validation_response(response_text, expects_json, question.id)
-
-             self.logger.debug(f"Received and parsed LLM validation data for Q:{question.id}")
-             return validation_data
-
+            llm_service: LLMTaskService = self.task_router.get_task_handler("validation")
+            formatted_prompt = llm_service.prompt_manager.format_prompt(prompt_key, **prompt_vars)
+            expects_json = llm_service.prompt_manager.is_json_output(prompt_key)
+            response_text = await llm_service.adapter.generate_completion(
+                prompt=formatted_prompt,
+                model_config=llm_service.task_model_config,
+            )
+            return self._parse_dimensions(response_text, expected_dims, expects_json, question_id)
         except (LLMServiceError, ConfigurationError) as e:
-             self.logger.error(f"Shared LLM validation call failed for Q:{question.id}: {e}")
-             return None
+            self.logger.error(f"Validation call '{prompt_key}' failed for Q:{question_id}: {e}")
+            return None
         except ValidationError as e:
-             self.logger.error(f"Failed to parse LLM validation response for Q:{question.id}: {e}")
-             return None
-        except Exception as e:
-             self.logger.exception(f"Unexpected error during shared LLM validation call for Q:{question.id}", exc_info=True)
-             return None
+            self.logger.error(f"Failed to parse '{prompt_key}' response for Q:{question_id}: {e}")
+            return None
+        except Exception:
+            self.logger.exception(
+                f"Unexpected error in '{prompt_key}' call for Q:{question_id}", exc_info=True
+            )
+            return None
 
-    def _parse_validation_response(self, response_text: str, expected_json: bool, question_id: str) -> Dict[str, Any]:
-        """
-        Parses the LLM validation response, expecting the per-dimension nested
-        shape produced by the question_validation prompt:
+    async def _get_faithfulness_data(self, question: Question, chunk: Chunk) -> Optional[Dict[str, Any]]:
+        """Faithfulness call — WITH source. Produces factual_accuracy + answer_completeness."""
+        return await self._call_validation_prompt(
+            prompt_key="faithfulness_validation",
+            expected_dims=_FAITHFULNESS_DIMENSIONS,
+            prompt_vars={
+                "chunk_content": chunk.content,
+                "question_text": question.text,
+                "answer_text": question.answer,
+            },
+            question_id=question.id,
+        )
 
-            {
-              "factual_accuracy":     {"score": float, "reason": str},
-              "answer_completeness":  {"score": float, "reason": str},
-              "question_clarity":     {"score": float, "reason": str},
-              "suggested_improvements": str | null
-            }
+    async def _get_standalone_data(self, question: Question) -> Optional[Dict[str, Any]]:
+        """Standalone call — WITHOUT source, by design. Produces the 'standalone'
+        dimension. The chunk is intentionally not passed: whether a question stands
+        alone cannot be judged while looking at the source it must stand apart from."""
+        return await self._call_validation_prompt(
+            prompt_key="standalone_validation",
+            expected_dims=_STANDALONE_DIMENSIONS,
+            prompt_vars={
+                "question_text": question.text,
+                "answer_text": question.answer,
+            },
+            question_id=question.id,
+        )
 
-        Args:
-            response_text: Raw response string.
-            expected_json: Whether prompt requested JSON.
-            question_id: ID for logging.
-
-        Returns:
-            Parsed and normalized dictionary with the nested-dimension shape.
-            Each dimension is a dict with float 'score' and optional str 'reason'.
-
-        Raises:
-            ValidationError: If parsing fails, the result is not a dict, or
-                the required dimension structure is missing.
-        """
+    def _parse_dimensions(self, response_text: str, expected_dims, expected_json: bool,
+                          question_id: str) -> Dict[str, Any]:
+        """Parse a validation response into the per-dimension nested shape:
+            { "<dim>": {"score": float, "reason": str|None}, ...,
+              "suggested_improvements": str|None }
+        `expected_dims` is the tuple of dimension keys required for THIS call."""
         response_text = response_text.strip()
-        if not response_text: raise ValidationError(f"LLM returned empty validation response for Q:{question_id}.")
-        if not expected_json: raise ValidationError(f"Validation prompt did not specify JSON output for Q:{question_id}.")
-        parsed_data: Optional[Dict] = None; source = "unknown"
-        try: # Direct JSON
-             if response_text.startswith('{') and response_text.endswith('}'): parsed_data = json.loads(response_text); source = "direct json object"
-        except json.JSONDecodeError: pass
-        if parsed_data is None: # Code block JSON
-            code_block_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", response_text, re.IGNORECASE)
-            if code_block_match:
-                 try: parsed_data = json.loads(code_block_match.group(1).strip()); source = "extracted block"
-                 except json.JSONDecodeError: pass
-                 if not isinstance(parsed_data, dict): parsed_data = None
-        if parsed_data is None: # YAML
-            try:
-                 import yaml; parsed_yaml = yaml.safe_load(response_text)
-                 if isinstance(parsed_yaml, dict): parsed_data = parsed_yaml; source = source + "+yaml" if source != "unknown" else "yaml"
-            except (ImportError, yaml.YAMLError): pass
-        if parsed_data is None or not isinstance(parsed_data, dict): raise ValidationError(f"Could not parse validation dictionary for Q:{question_id}.", {"preview": response_text[:200]})
+        if not response_text:
+            raise ValidationError(f"LLM returned empty validation response for Q:{question_id}.")
+        if not expected_json:
+            raise ValidationError(f"Validation prompt did not specify JSON output for Q:{question_id}.")
 
-        # Shape check: each dimension must be present and must be a dict containing 'score'.
-        # No backward-compatibility path: the old flat shape ('factual_accuracy': 0.85)
-        # is rejected here rather than silently coerced, so a mismatch surfaces immediately.
-        missing = [d for d in _VALIDATION_DIMENSIONS if d not in parsed_data]
+        parsed_data: Optional[Dict] = None
+        source = "unknown"
+        try:  # Direct JSON object
+            if response_text.startswith('{') and response_text.endswith('}'):
+                parsed_data = json.loads(response_text);
+                source = "direct json object"
+        except json.JSONDecodeError:
+            pass
+        if parsed_data is None:  # Fenced code block
+            m = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", response_text, re.IGNORECASE)
+            if m:
+                try:
+                    parsed_data = json.loads(m.group(1).strip());
+                    source = "extracted block"
+                except json.JSONDecodeError:
+                    pass
+                if not isinstance(parsed_data, dict):
+                    parsed_data = None
+        if parsed_data is None:  # YAML fallback
+            try:
+                import yaml
+                parsed_yaml = yaml.safe_load(response_text)
+                if isinstance(parsed_yaml, dict):
+                    parsed_data = parsed_yaml
+                    source = (source + "+yaml") if source != "unknown" else "yaml"
+            except (ImportError, yaml.YAMLError):
+                pass
+        if parsed_data is None or not isinstance(parsed_data, dict):
+            raise ValidationError(
+                f"Could not parse validation dictionary for Q:{question_id}.",
+                {"preview": response_text[:200]},
+            )
+
+        missing = [d for d in expected_dims if d not in parsed_data]
         if missing:
             raise ValidationError(
                 f"Validation response for Q:{question_id} missing required dimension(s): {missing}",
-                {"preview": response_text[:200]}
+                {"preview": response_text[:200]},
             )
-        non_dict = [d for d in _VALIDATION_DIMENSIONS if not isinstance(parsed_data.get(d), dict)]
+        non_dict = [d for d in expected_dims if not isinstance(parsed_data.get(d), dict)]
         if non_dict:
             raise ValidationError(
                 f"Validation response for Q:{question_id} has non-dict dimension(s) {non_dict}; "
-                f"expected per-dimension {{'score': float, 'reason': str}} structure.",
-                {"preview": response_text[:200]}
+                f"expected per-dimension {{'score': float, 'reason': str}}.",
+                {"preview": response_text[:200]},
             )
 
-        # Normalize each dimension: coerce score to float, reason to str (or None).
-        for dim in _VALIDATION_DIMENSIONS:
+        for dim in expected_dims:
             dim_data = parsed_data[dim]
             try:
                 dim_data['score'] = float(dim_data.get('score'))
@@ -191,7 +204,6 @@ class ValidationEngine:
             raw_reason = dim_data.get('reason')
             dim_data['reason'] = str(raw_reason).strip() if raw_reason else None
 
-        # Normalize suggested_improvements (still emitted at top level by the prompt).
         suggestions = parsed_data.get('suggested_improvements')
         parsed_data['suggested_improvements'] = str(suggestions).strip() if suggestions else None
         return parsed_data
@@ -383,51 +395,87 @@ class ValidationEngine:
 
         return final_results
 
-    async def _validate_question_workflow(self, question: Question, chunk: Chunk, needs_llm_call: bool) -> Dict[str, Any]:
-        """Helper coroutine to manage LLM call and validation for one question, adding validation results to metadata."""
-        shared_llm_data = await self._get_shared_llm_validation_data(question, chunk) if needs_llm_call else None
+    async def _validate_question_workflow(self, question: Question, chunk: Chunk,
+                                          needs_llm_call: bool) -> Dict[str, Any]:
+        """Per-question: Stage D leak gate, then faithfulness + standalone calls."""
+        # --- Stage D: deterministic leak filter (no LLM; runs before judge calls) ---
+        leak = self.leak_filter.check(question.text, question.answer)
+        if leak.action is LeakAction.DROP:
+            # Unambiguous source reference: reject without spending judge tokens.
+            individual = {
+                "leak_filter": ValidationResult(
+                    question_id=question.id, validator_name="leak_filter", is_valid=False,
+                    scores={"leak": 0.0},
+                    reasons=[f"{leak.reason} Matches: {', '.join(leak.matches)}"],
+                )
+            }
+            result = self._aggregate_validation_results(question.id, individual)
+            self._write_validation_metadata(question, result, leak)
+            return result
+
+        # --- Stages E + F: faithfulness (with source) + standalone (no source) ---
+        shared_llm_data: Optional[Dict[str, Any]] = None
+        if needs_llm_call:
+            faith, standalone = await asyncio.gather(
+                self._get_faithfulness_data(question, chunk),
+                self._get_standalone_data(question),
+            )
+            merged: Dict[str, Any] = {}
+            if isinstance(faith, dict):
+                merged.update(faith)
+            if isinstance(standalone, dict):
+                # Don't let standalone's suggestion clobber faithfulness's.
+                s_sugg = standalone.pop("suggested_improvements", None)
+                merged.update(standalone)
+                if not merged.get("suggested_improvements") and s_sugg:
+                    merged["suggested_improvements"] = s_sugg
+            shared_llm_data = merged or None
+
         individual_results = await self.validate_single_question(question, chunk, shared_llm_data)
 
-        # Get the aggregated validation result
-        result = self._aggregate_validation_results(question.id, individual_results)
+        # A FLAG is non-fatal: record it for the Phase 2 decontextualizer, but do
+        # not reject on the flag alone — the standalone judge is the arbiter.
+        if leak.action is LeakAction.FLAG:
+            individual_results["leak_filter"] = ValidationResult(
+                question_id=question.id, validator_name="leak_filter", is_valid=True,
+                scores={"leak": 0.5},
+                reasons=[f"FLAG (non-fatal): {leak.reason} Matches: {', '.join(leak.matches)}"],
+                suggested_improvements="Route through decontextualization.",
+            )
 
-        # Add validation results to question metadata for fine-tuning
+        result = self._aggregate_validation_results(question.id, individual_results)
+        self._write_validation_metadata(question, result, leak)
+        return result
+
+    def _write_validation_metadata(self, question: Question, result: Dict[str, Any],
+                                   leak=None) -> None:
+        """Write the aggregated verdict onto question.metadata['validation'].
+        Extracted so the diversity phase in validate_questions can reuse it."""
         try:
             if not question.metadata:
                 question.metadata = {}
-
-            # Store validation results in question metadata
-            validation_metadata = {
+            md: Dict[str, Any] = {
                 'validation_is_valid': result['is_valid'],
                 'validation_scores': result['scores'],
-                'validation_reasons': result['reasons']
+                'validation_reasons': result['reasons'],
             }
-
-            if result['suggested_improvements']:
-                validation_metadata['validation_suggestions'] = result['suggested_improvements']
-
-            # Store detailed validator results
-            validator_details = {}
-            for validator_name, validator_result in result['validation_results'].items():
-                if isinstance(validator_result, ValidationResult):
-                    validator_details[validator_name] = {
-                        'is_valid': validator_result.is_valid,
-                        'scores': validator_result.scores,
-                        'reasons': validator_result.reasons
+            if result.get('suggested_improvements'):
+                md['validation_suggestions'] = result['suggested_improvements']
+            details = {}
+            for vname, vres in result.get('validation_results', {}).items():
+                if isinstance(vres, ValidationResult):
+                    details[vname] = {
+                        'is_valid': vres.is_valid, 'scores': vres.scores, 'reasons': vres.reasons
                     }
-
-            if validator_details:
-                validation_metadata['validator_details'] = validator_details
-
-            # Add validation timestamp
-            validation_metadata['validation_timestamp'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-            question.metadata['validation'] = validation_metadata
-
+            if details:
+                md['validator_details'] = details
+            if leak is not None:
+                md['leak_filter'] = {'action': leak.action.value, 'matches': leak.matches}
+            md['validation_timestamp'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            question.metadata['validation'] = md
         except Exception as e:
-            self.logger.warning(f"Could not add validation metadata to question {question.id}: {e}")
+            self.logger.warning(f"Could not write validation metadata for Q:{question.id}: {e}")
 
-        return result
 
     def get_valid_questions(self, questions: List[Question],
                           aggregated_results: Dict[str, Dict[str, Any]]) -> List[Question]:

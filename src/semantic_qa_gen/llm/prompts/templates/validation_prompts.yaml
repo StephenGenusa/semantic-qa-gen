@@ -1,0 +1,129 @@
+# src/semantic_qa_gen/llm/prompts/templates/validation_prompts.yaml
+# Validation prompt templates for the two-call split (Phase 0).
+#
+# These replace the single `question_validation` prompt, which scored
+# faithfulness AND self-containment in one call while holding the source in
+# context. Self-containment means "understandable WITHOUT the source", which
+# cannot be judged while looking at the source — so it is split out into a
+# separate, source-free call below.
+#
+# BRACE-ESCAPING: PromptManager.format() runs str.format() over these strings.
+# Every literal brace that must appear in the model's JSON output is doubled
+# ({{ and }}). Single-braced names ({question_text}, etc.) are real placeholders
+# and must match the kwargs the engine passes in.
+
+faithfulness_validation:
+  description: >-
+    Scores answer faithfulness (factual accuracy + completeness) against the
+    source text. Runs WITH the source in context.
+  json_output: true
+  system_prompt: >-
+    You are an expert evaluator of question-answer pairs. You judge only whether
+    the answer is supported by, and complete with respect to, the provided source
+    text. You do not judge wording or style. You return strictly valid JSON and
+    nothing else.
+  template: |
+    Evaluate the following question-answer pair against the source text. Score
+    the two dimensions independently. Each dimension has its own score (a float
+    between 0.0 and 1.0) and its own one- or two-sentence reason.
+
+    Source text:
+    ---
+    {chunk_content}
+    ---
+
+    Question: {question_text}
+
+    Answer: {answer_text}
+
+    Score these two dimensions:
+
+    1. factual_accuracy: Is every claim in the answer supported by the source text?
+       - 1.0: every claim is directly supported by the source text.
+       - 0.5: partially supported; some claims have no support in the text.
+       - 0.0: the answer contradicts the source text or relies on outside knowledge.
+
+    2. answer_completeness: Does the answer fully address what the question asks,
+       using what the source text contains?
+       - 1.0: the answer addresses every part of the question.
+       - 0.5: addresses the question but omits material the source contains and the question implies.
+       - 0.0: does not actually address the question.
+
+    Return EXACTLY this JSON object. The numbers shown are illustrative of the
+    expected ranges; replace them with values appropriate to the pair you scored:
+    {{
+        "factual_accuracy": {{
+            "score": 0.85,
+            "reason": "Concise explanation of the factual_accuracy score."
+        }},
+        "answer_completeness": {{
+            "score": 0.75,
+            "reason": "Concise explanation of the answer_completeness score."
+        }},
+        "suggested_improvements": "Optional short suggestion, or an empty string."
+    }}
+
+    CRITICAL: Your response MUST be ONLY a single strictly valid JSON object
+    conforming to RFC 8259. No comments, no markdown fences, no text outside it.
+
+
+standalone_validation:
+  description: >-
+    Scores whether the question-answer pair is understandable and answerable on
+    its own. Runs WITHOUT the source text — this is intentional and required.
+  json_output: true
+  system_prompt: >-
+    You are an expert evaluator who judges whether a question-answer pair can be
+    understood on its own, with no access to any source document. You are NOT given
+    the source, by design. You return strictly valid JSON and nothing else.
+  template: |
+    You are evaluating a single question-answer pair that will be used as training
+    data, where the original source document will NOT be available alongside it.
+    You have intentionally NOT been given the source. Judge the pair only on
+    whether it stands on its own.
+
+    Question: {question_text}
+
+    Answer: {answer_text}
+
+    Score one dimension:
+
+    standalone: Can a reader who has never seen any source understand the question
+    and read the answer as a freestanding statement of fact?
+
+    Penalize, in proportion to severity:
+      - References to a source container: "according to the passage", "the text
+        states", "as described above", "in this document". (If you see these, the
+        score should be near 0.0.)
+      - Unresolved references whose antecedent is not supplied by the question
+        itself: a leading "this technique", "that method", "the algorithm", "the
+        approach", "the author", where the question never names what is meant. A
+        reader with no source cannot resolve these. This is the most important
+        thing to check, since a deterministic filter does not catch it.
+      - Questions that are only answerable if the reader can see some specific
+        unnamed passage, figure, list, or example.
+
+    Reward questions that name their subject explicitly (e.g., "In product
+    quantization, what algorithm groups each sub-vector into k centroids?") and
+    answers that restate the subject rather than pointing back at it.
+
+    Scoring guide:
+      - 1.0: fully self-contained; the subject is named; no dangling references;
+        answerable as written by a reader with no source.
+      - 0.5: understandable but with one mild unresolved reference or vague phrasing
+        a reader could work around.
+      - 0.0: depends on an unseen source to make sense (container reference, or a
+        dangling "this/that X" with no antecedent in the question).
+
+    Return EXACTLY this JSON object. The number shown is illustrative; replace it
+    with a value appropriate to the pair you scored:
+    {{
+        "standalone": {{
+            "score": 0.90,
+            "reason": "Concise explanation, naming any unresolved reference you found."
+        }},
+        "suggested_improvements": "Optional rewrite suggestion that names the subject, or an empty string."
+    }}
+
+    CRITICAL: Your response MUST be ONLY a single strictly valid JSON object
+    conforming to RFC 8259. No comments, no markdown fences, no text outside it.
