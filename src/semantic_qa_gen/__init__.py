@@ -54,8 +54,6 @@ Basic Usage:
     results = project.process_document("path/to/scanned_document.pdf", loader_config=pdf_config)
 """
 
-
-__version__ = "0.1.0"
 __author__ = "Stephen Genusa"
 __license__ = "MIT"
 

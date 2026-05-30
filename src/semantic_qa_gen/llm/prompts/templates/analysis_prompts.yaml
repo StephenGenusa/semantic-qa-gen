@@ -1,23 +1,16 @@
-# src/semantic_qa_gen/llm/prompts/templates/analysis_prompts.yaml
-# Analysis prompt templates for chunk analysis and classification.
+# Default prompt templates (analysis_prompts.yaml), written by SemanticQAGen.
+# Edit freely. This file is NOT overwritten once it exists.
 #
-# NOTE: This is YAML, not Python. Do NOT prefix the file with a """docstring""";
-# a leading triple-quote makes the whole file parse as a single scalar string,
-# not a mapping, and the loader will reject it.
-#
-# Brace rule: each `template` is consumed by str.format(), so every literal brace
-# in a JSON example is doubled ({{ }}). Single-braced names are real placeholders.
+# This is YAML, not Python: do NOT add a leading """docstring""".
+# Braces in JSON examples are doubled ({{ }}) because each template is
+# consumed by str.format(); single braces will break formatting.
 
 chunk_analysis:
   description: "Analyzes a text chunk for information density and question potential."
   json_output: true
-  system_prompt: >-
-    You are an expert analyst who evaluates source passages to determine how many
-    high-quality, source-grounded questions can be generated from them. You return
-    strictly valid JSON and nothing else.
+  system_prompt: "You are an expert analyst who evaluates source passages to determine how many high-quality, source-grounded questions can be generated from them. You return strictly valid JSON and nothing else."
   template: |
-    Analyze the following text passage to estimate how many source-grounded
-    questions can be generated from it.
+    Analyze the following text passage to estimate how many source-grounded questions can be generated from it.
 
     Text passage:
     ---
@@ -29,27 +22,17 @@ chunk_analysis:
     - topic_coherence: how focused the passage is on a single topic
     - complexity: how technically or conceptually difficult the content is
 
-    Then estimate how many questions of each category could be answered using
-    only information present in this passage. Use these category definitions:
+    Then estimate how many questions of each category could be answered using only information present in this passage. Use these category definitions:
 
     - factual: answerable by quoting or paraphrasing a single span of the text.
-    - inferential: requires combining two or more distinct pieces of information
-      from the text.
-    - conceptual: requires identifying a principle or generalization that the
-      text supports.
+    - inferential: requires combining two or more distinct pieces of information from the text.
+    - conceptual: requires identifying a principle or generalization that the text supports.
 
-    Estimate counts assuming roughly one substantive question per 100-150 words
-    of meaningful content. The total across all three categories must not exceed
-    10. If the passage is short, contains little substantive content, or is
-    largely boilerplate, return zeros.
+    Estimate counts assuming roughly one substantive question per 100-150 words of meaningful content. The total across all three categories must not exceed 10. If the passage is short, contains little substantive content, or is largely boilerplate, return zeros.
 
-    Finally, list 3-7 key concepts, terms, or named entities from the passage.
-    These will be passed to the question generator to anchor what the questions
-    should cover.
+    Finally, list 3-7 key concepts, terms, or named entities from the passage. These will be passed to the question generator to anchor what the questions should cover.
 
-    Return your analysis in EXACTLY this JSON format. The values shown below are
-    illustrative of the expected ranges; replace them with values appropriate to
-    the passage you analyzed:
+    Return your analysis in EXACTLY this JSON format. The values shown below are illustrative of the expected ranges; replace them with values appropriate to the passage you analyzed:
     {{
         "information_density": 0.65,
         "topic_coherence": 0.80,
@@ -63,40 +46,6 @@ chunk_analysis:
         "notes": "Brief observations about the passage that would help a question writer."
     }}
 
-    CRITICAL: Your response MUST be ONLY a single, strictly valid JSON object
-    conforming to RFC 8259. No comments, no markdown fences, no text outside it.
+    **CRITICAL: Your response MUST be ONLY a single, strictly valid JSON object conforming to RFC 8259.**
+    **DO NOT include any comments (// or #), markdown code fences, or any text outside the JSON structure.**
 
-
-chunk_classification:
-  description: "Classifies a text chunk by subject area and educational level."
-  json_output: true
-  system_prompt: >-
-    You are an expert curriculum specialist who classifies educational content by
-    subject and level. You return strictly valid JSON and nothing else.
-  template: |
-    Classify the following text passage by subject area and educational level.
-
-    Text passage:
-    ---
-    {chunk_content}
-    ---
-
-    Identify the primary subject area(s) and the appropriate educational level
-    for this content.
-
-    Return your analysis in EXACTLY this JSON format. The values shown are
-    illustrative; replace them with values appropriate to the passage:
-    {{
-        "primary_subject": "subject_name",
-        "secondary_subjects": ["subject1", "subject2"],
-        "educational_level": "undergraduate",
-        "complexity": 0.50,
-        "specialized_knowledge_required": true,
-        "reasoning": "Brief explanation of your classification."
-    }}
-
-    The "educational_level" field must be one of: "elementary", "middle_school",
-    "high_school", "undergraduate", "graduate", "professional".
-
-    CRITICAL: Your response MUST be ONLY a single, strictly valid JSON object
-    conforming to RFC 8259. No comments, no markdown fences, no text outside it.

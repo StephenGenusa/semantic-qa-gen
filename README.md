@@ -22,9 +22,7 @@
 </p>
 
 ---
-> **Alpha Release (v0.1.0)**: This library is in active development. The core functionality is implemented, but some advanced features are still under development.
-
-> **UPDATE 2025/05/05** I have done a significant amount of work and the library is now functional. The code in this repo has not been updated yet. I intend to make further changes and test the library thoroughly before pushing the code. Please do not fork and issue pull requests. A significant amount of refactoring and feature additions have been made.
+> **Beta (v0.5.2)**: SemanticQAGen is functional and actively maintained. The public API is largely stable, but some details may still change ahead of the 1.0 release.
 ---
 
 ## Overview
@@ -43,35 +41,51 @@ SemanticQAGen features enhanced semantic chunking, dynamic question generation, 
 pip install semantic-qa-gen
 ```
 
-### With Optional Dependencies
+The core install is enough to process plain-text and Markdown documents and to talk to any OpenAI-compatible LLM endpoint — OpenAI, Azure OpenAI, OpenRouter, or a local server such as Ollama — over the library's built-in HTTP client.
+
+### Optional Dependencies
+
+Install extras for additional document formats and capabilities:
 
 ```bash
-# With PDF support
+# PDF reading
 pip install semantic-qa-gen[pdf]
 
-# With DOCX support
+# DOCX reading
 pip install semantic-qa-gen[docx]
 
-# With all document format support
+# OCR for scanned PDFs (also requires the Tesseract binary; see System Dependencies)
+pip install semantic-qa-gen[ocr]
+
+# Advanced NLP analysis (scikit-learn, numpy)
+pip install semantic-qa-gen[advanced]
+
+# All document-format support (PDF + DOCX + OCR + advanced analysis)
 pip install semantic-qa-gen[formats]
 
-# With OpenAI LLM support
-pip install semantic-qa-gen[openai]
-
-# With NLP capabilities
+# Sentence-aware chunking helpers (NLTK)
 pip install semantic-qa-gen[nlp]
 
-# With all features
+# Everything above, plus the official OpenAI SDK and Rich console output
 pip install semantic-qa-gen[full]
 
-# Development installation with testing tools
+# Development tools (tests, linting, docs)
 pip install semantic-qa-gen[dev]
 ```
+
+> **A note on LLM providers:** You do **not** need a provider-specific extra to use hosted or local OpenAI-compatible APIs. The library communicates with them directly over its built-in HTTP client, so OpenAI, Azure OpenAI, OpenRouter, and local servers all work with the core install. The `[openai]` extra only installs the official `openai` SDK, which SemanticQAGen itself does not use — install it only if *your own* code depends on that SDK.
+
+### System Dependencies
+
+A couple of features rely on libraries outside of pip:
+
+- **File-type detection** uses `python-magic`, which requires the system `libmagic` library. On Debian/Ubuntu: `sudo apt-get install libmagic1`. On macOS: `brew install libmagic`. On Windows, install `python-magic-bin` instead of relying on the system library.
+- **OCR** (`[ocr]`) requires the Tesseract OCR engine on your `PATH`. On Debian/Ubuntu: `sudo apt-get install tesseract-ocr`. On macOS: `brew install tesseract`.
 
 ### Requirements
 
 - Python 3.10 or higher
-- Required dependencies are automatically installed with the package
+- Core Python dependencies install automatically; the system libraries above are only needed for their corresponding features.
 
 ---
 
@@ -125,10 +139,11 @@ SemanticQAGen offers a comprehensive set of features designed to produce high-qu
 |  | Adaptive generation based on content quality                       | ✅ |
 |  | Question diversity enforcement                                     | ✅ |
 |  | Custom question categories                                         | ✅ |
-| **Answer Validation** | Factual accuracy verification                                      | ✅ |
-|  | Question clarity evaluation                                        | ✅ |
-|  | Answer completeness assessment                                     | ✅ |
-| **LLM Integration** | OpenAI API support                                                 | ✅ |
+| **Answer Validation** | Faithfulness verification (accuracy + completeness)               | ✅ |
+|  | Standalone / decontextualization rewriting                         | ✅ |
+|  | Answer-leakage filtering                                           | ✅ |
+|  | Diversity filtering                                                | ✅ |
+| **LLM Integration** | OpenAI-compatible API support (OpenAI, Azure, OpenRouter)         | ✅ |
 |  | Local LLM support (Ollama, etc.)                                   | ✅ |
 |  | Hybrid task routing                                                | ✅ |
 |  | Automatic fallback mechanisms                                      | ✅ |
@@ -149,7 +164,7 @@ SemanticQAGen offers a comprehensive set of features designed to produce high-qu
 ### Document Processing
 
 #### Multiple Format Support
-SemanticQAGen can read and process a variety of document formats including plain text, PDF, Markdown, and DOCX. Each format is handled by specialized loaders that extract content while preserving document structure.
+SemanticQAGen can read and process a variety of document formats including plain text, PDF, Markdown, and DOCX. Each format is handled by specialized loaders that extract content while preserving document structure. (PDF support requires the `[pdf]` extra and DOCX support requires the `[docx]` extra; TXT and Markdown work with the core install.)
 
 ```python
 # Process different file types the same way
@@ -233,14 +248,17 @@ Users can define custom question categories beyond the standard factual/inferent
 
 ### Answer Validation
 
-#### Factual Accuracy Verification
-All generated answers are verified against the source content to ensure they do not contain factual errors or hallucinations.
+#### Faithfulness Verification
+Generated answers are scored for faithfulness against the source content — both factual accuracy and completeness — to ensure they do not contain errors or hallucinations and that they fully address the question.
 
-#### Question Clarity Evaluation
-Questions are evaluated for clarity and unambiguity, filtering out poorly formed questions that might confuse learners.
+#### Standalone / Decontextualization Rewriting
+Question-answer pairs are evaluated for whether they make sense without the source passage, and can be rewritten to stand alone while preserving their grounded meaning. This produces self-contained pairs suitable for fine-tuning datasets.
 
-#### Answer Completeness Assessment
-The system checks that answers thoroughly address the questions asked, eliminating partial or incomplete responses.
+#### Answer-Leakage Filtering
+A dedicated filter detects and removes questions that inadvertently reveal their answer (or that restate the source verbatim), keeping the generated set genuinely question-shaped.
+
+#### Diversity Filtering
+Newly generated questions are compared against the existing set so near-duplicates are filtered out, keeping the output varied.
 
 ---
 
@@ -248,14 +266,14 @@ The system checks that answers thoroughly address the questions asked, eliminati
 
 ### LLM Integration
 
-#### OpenAI API Support
-Full integration with OpenAI with optimized prompting strategies for each task in the pipeline.
+#### OpenAI-Compatible API Support
+SemanticQAGen talks to OpenAI-compatible chat-completion endpoints over its own built-in HTTP client, with optimized prompting strategies for each task in the pipeline. This covers OpenAI, Azure OpenAI, OpenRouter, and any other service that exposes an OpenAI-compatible API — no provider SDK is required.
 
 #### Local LLM Support
-Support for local LLM deployment via Ollama and similar services, allowing use of models like Mistral, running on your own hardware without requiring external API access.
+Support for local LLM deployment via Ollama and similar OpenAI-compatible servers, allowing use of models like Mistral, running on your own hardware without requiring external API access.
 
 #### Hybrid Task Routing
-Intelligently route different tasks to the most appropriate LLM based on task complexity and model capability. For example, use GPT-4 for complex question generation but a local model for simple validation tasks.
+Intelligently route different tasks to the most appropriate LLM based on task complexity and model capability. For example, use a strong remote model for complex question generation but a local model for simple validation tasks.
 
 ```python
 config = {
@@ -298,7 +316,7 @@ config = {
 Multi-threaded processing of chunks with configurable concurrency levels to maximize throughput on multi-core systems.
 
 #### Progress Tracking and Reporting
-Detailed progress reporting during processing, with support for both simple console output and rich interactive displays (when installed with Rich).
+Detailed progress reporting during processing, with support for both simple console output and rich interactive displays (when installed with Rich, e.g. via the `[full]` extra).
 
 ### Output Options
 
@@ -323,75 +341,90 @@ Comprehensive statistics about generated questions, including category distribut
 ## Project File Organization
 ```
 .
-├── semantic_qa_gen
-│   ├── __init__.py
-│   ├── version.py
-│   ├── semantic_qa_gen.py
-│   ├── chunking
-│   │   ├── analyzer.py
-│   │   ├── engine.py
-│   │   └── strategies
-│   │       ├── base.py
-│   │       ├── fixed_size.py
-│   │       ├── nlp_helpers.py
-│   │       └── semantic.py
-│   ├── cli
-│   │   ├── __init__.py
-│   │   └── commands.py
-│   ├── config
-│   │   ├── __init__.py
-│   │   ├── manager.py
-│   │   └── schema.py
-│   ├── document
-│   │   ├── __init__.py
-│   │   ├── models.py
-│   │   ├── processor.py
-│   │   └── loaders
-│   │       ├── __init__.py
-│   │       ├── base.py
-│   │       ├── docx.py
-│   │       ├── markdown.py
-│   │       ├── pdf.py
-│   │       └── text.py
-│   ├── llm
-│   │   ├── __init__.py
-│   │   ├── router.py
-│   │   ├── service.py
-│   │   ├── adapters
-│   │   │   ├── __init__.py
-│   │   │   ├── base.py
-│   │   │   └── openai_adapter.py
-│   │   └── prompts
-│   │       ├── __init__.py
-│   │       └── manager.py
-│   ├── output
-│   │   ├── __init__.py
-│   │   ├── formatter.py
-│   │   └── adapters
-│   │       ├── __init__.py
-│   │       ├── csv.py
-│   │       ├── json.py
-│   │       └── jsonl.py
-│   ├── pipeline
-│   │   ├── __init__.py
-│   │   └── semantic.py
-│   ├── question
-│   │   ├── __init__.py
-│   │   ├── generator.py
-│   │   ├── processor.py
-│   │   └── validation
-│   │       ├── __init__.py
-│   │       ├── base.py
-│   │       ├── diversity.py
-│   │       ├── engine.py
-│   │       └── factual.py
-│   └── utils
-│       ├── __init__.py
-│       ├── checkpoint.py
-│       ├── error.py
-│       ├── logging.py
-│       ├── progress.py
-│       └── project.py
+├── pyproject.toml
+├── tox.ini
+├── README.md
+└── src
+    ├── main.py
+    └── semantic_qa_gen
+        ├── __init__.py
+        ├── version.py
+        ├── semantic_qa_gen.py
+        ├── chunking
+        │   ├── __init__.py
+        │   ├── analyzer.py
+        │   ├── engine.py
+        │   └── strategies
+        │       ├── __init__.py
+        │       ├── base.py
+        │       ├── fixed_size.py
+        │       ├── nlp_helpers.py
+        │       └── semantic.py
+        ├── cli
+        │   ├── __init__.py
+        │   └── commands.py
+        ├── config
+        │   ├── __init__.py
+        │   ├── manager.py
+        │   └── schema.py
+        ├── document
+        │   ├── __init__.py
+        │   ├── models.py
+        │   ├── processor.py
+        │   └── loaders
+        │       ├── __init__.py
+        │       ├── base.py
+        │       ├── docx.py
+        │       ├── markdown.py
+        │       ├── pdf.py
+        │       └── text.py
+        ├── llm
+        │   ├── __init__.py
+        │   ├── router.py
+        │   ├── adapters
+        │   │   ├── __init__.py
+        │   │   ├── base.py
+        │   │   └── openai_adapter.py
+        │   └── prompts
+        │       ├── __init__.py
+        │       ├── manager.py
+        │       └── templates
+        │           ├── analysis_prompts.yaml
+        │           ├── generation_prompts.yaml
+        │           ├── validation_prompts.yaml
+        │           └── decontextualize_prompts.yaml
+        ├── output
+        │   ├── __init__.py
+        │   ├── formatter.py
+        │   └── adapters
+        │       ├── __init__.py
+        │       ├── csv.py
+        │       ├── json.py
+        │       └── jsonl.py
+        ├── pipeline
+        │   ├── __init__.py
+        │   └── semantic.py
+        ├── question
+        │   ├── __init__.py
+        │   ├── generator.py
+        │   ├── processor.py
+        │   ├── filters
+        │   │   ├── __init__.py
+        │   │   └── leak_filter.py
+        │   └── validation
+        │       ├── __init__.py
+        │       ├── base.py
+        │       ├── decontextualizer.py
+        │       ├── diversity.py
+        │       ├── engine.py
+        │       └── factual.py
+        └── utils
+            ├── __init__.py
+            ├── checkpoint.py
+            ├── error.py
+            ├── logging.py
+            ├── progress.py
+            └── project.py
 ```
 
 ## Architecture
@@ -987,6 +1020,12 @@ class CustomChunkingStrategy(BaseChunkingStrategy):
 pip install semantic-qa-gen[full]
 ```
 
+**Issue**: `ImportError` or "failed to find libmagic" on startup
+**Solution**: `python-magic` needs the system `libmagic` library. Install it (`sudo apt-get install libmagic1`, or `brew install libmagic`), or on Windows install `python-magic-bin`.
+
+**Issue**: OCR produces no text from scanned PDFs
+**Solution**: Install the `[ocr]` extra **and** the Tesseract engine itself (`sudo apt-get install tesseract-ocr` or `brew install tesseract`), then set `ocr_enabled: true` in the PDF loader config.
+
 **Issue**: Conflicts with existing packages
 **Solution**: Use a virtual environment:
 ```bash
@@ -1083,4 +1122,4 @@ semantic-qa-gen process document.pdf -o output --verbose
 
 SemanticQAGen is released under the MIT License.
 
-Copyright © 2025 Stephen Genusa
+Copyright © 2025–2026 Stephen Genusa
